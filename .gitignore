@@ -1,0 +1,50 @@
+# Local planning and agent files
+.scratch/
+docs/
+AGENTS.md
+DESIGN.md
+PRD.md
+
+# Local configuration and secrets
+.env
+.env.*
+.netrc
+.npmrc
+.pypirc
+.aws/
+.ssh/
+id_rsa*
+id_ed25519*
+*.pem
+*.key
+*.p12
+*.pfx
+*.kdbx
+*.keystore
+*.jks
+*credentials*
+*Credentials*
+*secrets*
+*Secrets*
+
+# Downloaded manga and generated output
+**/chapter-*/
+**/vol-*/
+**/.state.json
+**/.pack.json
+**/.pack.json.lock
+**/run-*.log
+*.cbz
+*.part
+
+# Built binaries and test artifacts
+/komiku-cli
+/komiku-cli.exe
+*.test
+*.out
+coverage.*
+
+# Editor and OS files
+.DS_Store
+.idea/
+.vscode/

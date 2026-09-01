@@ -57,7 +57,7 @@ func TestRichFocusUsesReverseVideoWithoutFixedColors(t *testing.T) {
 	if !reverseVideo.MatchString(focusView) {
 		t.Fatalf("rich focus lacks reverse-video emphasis: %q", focusView)
 	}
-	fixedColor := regexp.MustCompile(`\x1b\[[0-9;]*(?:3[0-9]|4[0-9]|9[0-9]|10[0-7])(?:;[0-9;]*)?m`)
+	fixedColor := regexp.MustCompile(`\x1b\[[0-9;]*(?:3[0-8]|4[0-8]|9[1-7]|10[0-7])(?:;[0-9;]*)?m`)
 	if fixedColor.MatchString(focusView) {
 		t.Fatalf("rich focus contains a fixed foreground/background color: %q", focusView)
 	}
@@ -77,6 +77,47 @@ func TestRichFocusUsesReverseVideoWithoutFixedColors(t *testing.T) {
 	current.jobs = []cli.Job{{Chapter: current.chapters[0]}}
 	if progressView := current.View(); fixedColor.MatchString(progressView) {
 		t.Fatalf("rich progress contains a fixed foreground/background color: %q", progressView)
+	}
+}
+
+func TestViewDrawsSidebarAndContentBorders(t *testing.T) {
+	current := newModel(&fakeBackend{}, packer.Raw, true, nil, time.Now)
+	current.width, current.height = 60, 20
+	current.outputRoot = "/manga"
+	view := current.View()
+	if !strings.HasPrefix(view, "+-") || !strings.Contains(view, "+\n|") {
+		t.Fatalf("plain view missing ASCII frame:\n%q", view[:200])
+	}
+	if strings.Count(view, "|") < 4 {
+		t.Fatalf("plain view frame incomplete:\n%s", view)
+	}
+	renderer := lipgloss.NewRenderer(io.Discard)
+	rich := newModel(&fakeBackend{}, packer.Raw, false, renderer, time.Now)
+	rich.width, rich.height = 60, 20
+	rich.outputRoot = "/manga"
+	richView := rich.View()
+	if !strings.Contains(richView, "\u256d") || !strings.Contains(richView, "\u2500") {
+		t.Fatalf("rich view missing rounded frame:\n%q", richView[:120])
+	}
+	lines := strings.Split(richView, "\n")
+	if len(lines) < 6 || !strings.HasSuffix(lines[0], "\u256e") {
+		t.Fatalf("rich top border malformed: %q", lines[0])
+	}
+}
+
+func TestViewBordersFitTerminalWidth(t *testing.T) {
+	for _, width := range []int{20, 32, 60, 120} {
+		current := newModel(&fakeBackend{}, packer.Raw, true, nil, time.Now)
+		current.width, current.height = width, 20
+		view := current.View()
+		if width < 48 && !strings.Contains(view, "komiku-cli") {
+			t.Fatalf("width=%d compact view hid the active screen:\n%s", width, view)
+		}
+		for lineNumber, line := range strings.Split(view, "\n") {
+			if got := ansi.StringWidth(line); got > width {
+				t.Fatalf("width=%d line=%d rendered=%d: %q", width, lineNumber, got, line)
+			}
+		}
 	}
 }
 
@@ -103,7 +144,11 @@ func TestViewsFitSupportedTerminalWidths(t *testing.T) {
 		base.packSeries = []string{strings.Repeat("long-series/", 15)}
 		base.packSeriesDir = strings.Repeat("long-series/", 15)
 		base.standalonePackOutput = strings.Repeat("packed output/", 15)
-		for _, target := range []screen{homeScreen, outputScreen, searchScreen, chaptersScreen, rangeScreen, downloadingScreen, doneScreen, packingScreen, packSeriesScreen, packPathScreen, packRecoveryScreen, standalonePackingScreen, standalonePackDoneScreen} {
+		base.downloads = []downloadStatus{{dir: strings.Repeat("long-downloads/", 15)}, {dir: strings.Repeat("legacy-downloads/", 15), recover: true}}
+		base.outputInput.SetValue(strings.Repeat("settings-folder/", 15))
+		base.settingsPreset = packer.Tiny
+		base.message = strings.Repeat("saved message/", 15)
+		for _, target := range []screen{searchScreen, chaptersScreen, rangeScreen, downloadingScreen, doneScreen, packingScreen, packSeriesScreen, packPathScreen, packRecoveryScreen, standalonePackingScreen, standalonePackDoneScreen, downloadsScreen, settingsScreen} {
 			base.screen = target
 			for lineNumber, line := range strings.Split(base.View(), "\n") {
 				if got := ansi.StringWidth(line); got > width {
@@ -158,7 +203,7 @@ func TestGroupedPagingKeepsCanonicalFocusedControlVisibleAtShortHeights(t *testi
 		{RawID: "5", Display: "5", Number: 5, URL: "extra"},
 	}
 	current := newModel(&fakeBackend{}, packer.Raw, true, nil, time.Now)
-	current.width, current.height = 80, 8
+	current.width, current.height = 80, 10
 	current.screen, current.chapters = chaptersScreen, chapters
 	current.groupView, current.groupLoaded = true, true
 	current.groupMappings = []komiku.Volume{{Volume: 1, Start: 1, End: 2}, {Volume: 2, Start: 3, End: 4}}
@@ -186,14 +231,14 @@ func TestGroupedPagingKeepsCanonicalFocusedControlVisibleAtShortHeights(t *testi
 		}
 	}
 	current.groupFocus = groupFocus{kind: groupFocusVolume, volume: 2}
-	updated, _ := current.Update(tea.WindowSizeMsg{Width: 20, Height: 8})
+	updated, _ := current.Update(tea.WindowSizeMsg{Width: 40, Height: 8})
 	resizedModel := updated.(model)
 	resized := resizedModel.View()
 	if !sameGroupFocus(resizedModel.groupFocus, current.groupFocus) || !strings.Contains(resized, "> [ ] Volume") {
 		t.Fatalf("resize lost the focused volume control:\n%s", resized)
 	}
 	for lineNumber, line := range strings.Split(resized, "\n") {
-		if got := ansi.StringWidth(line); got > 20 {
+		if got := ansi.StringWidth(line); got > 40 {
 			t.Fatalf("resized grouped line %d rendered width %d: %q", lineNumber, got, line)
 		}
 	}

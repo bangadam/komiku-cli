@@ -1,12 +1,15 @@
 # komiku-cli
 
-A keyboard-first manga downloader and CBZ packer for [Komiku](https://komiku.org), built in Go.
+A keyboard-first manga downloader and CBZ packer for
+[Komiku](https://komiku.org), built in Go.
 
-`komiku-cli` provides an interactive terminal interface for searching, selecting, downloading, resuming, and packing manga. It also supports non-interactive downloads and offline repacking for scripts and automation.
+`komiku-cli` provides an interactive terminal interface for searching,
+selecting, downloading, resuming, and packing manga. It also supports
+non-interactive downloads and offline repacking for scripts and automation.
 
 ## Features
 
-- Interactive Bubble Tea TUI with keyboard-only controls
+- Interactive Bubble Tea TUI styled with Lip Gloss and operated entirely by keyboard
 - Search by title or open a Komiku series URL
 - Select chapters, chapter ranges, or mapped Wikipedia volumes
 - Resume incomplete downloads without replacing valid pages
@@ -15,6 +18,7 @@ A keyboard-first manga downloader and CBZ packer for [Komiku](https://komiku.org
 - Kindle-oriented image presets plus lossless `raw` packing
 - Persisted pack metadata for later offline repacking
 - One-time recovery for downloads created before pack metadata existed
+- Cobra command tree with generated help for TUI, download, pack, and config workflows
 - Headless mode for scripts and automation
 
 ## Requirements
@@ -49,15 +53,24 @@ Launch the TUI:
 komiku-cli
 ```
 
-The home screen offers two workflows:
+The sidebar exposes four workflows:
 
-1. **Download manga** — choose a storage folder, search for a title, select chapters, then download.
-2. **Pack downloaded manga** — choose an existing download and create CBZ archives without downloading images again.
+1. `Search`: find a title or open a Komiku URL, select chapters, then download.
+2. `To CBZ`: pack an existing download without fetching images again.
+3. `Downloads`: inspect local download status and choose a series to pack.
+4. `Settings`: change the download folder and CBZ preset.
 
 Use a different storage folder for one session:
 
 ```sh
 komiku-cli --out "/path/to/manga"
+```
+
+Inspect the generated command and flag reference:
+
+```sh
+komiku-cli --help
+komiku-cli dl --help
 ```
 
 ### Headless download
@@ -71,7 +84,8 @@ komiku-cli dl https://komiku.org/manga/example/   --ch 1-20,25.5   --no-tui   --
 Download mapped volumes and pack them immediately:
 
 ```sh
-komiku-cli dl https://komiku.org/manga/example/   --vol 1-3   --no-tui   --pack   --preset medium
+komiku-cli dl https://komiku.org/manga/example/ \
+  --vol 1-3 --no-tui --pack --preset medium
 ```
 
 `--ch` and `--vol` are mutually exclusive. `--pack` requires a mapped `--vol` selection.
@@ -88,10 +102,12 @@ komiku-cli pack "/path/to/manga/example" --vol 1-3 --preset raw
 Older flat downloads need one Wikipedia lookup to recover volume boundaries:
 
 ```sh
-komiku-cli pack "/path/to/manga/example"   --recover-wikipedia   --wikipedia-title "Example"
+komiku-cli pack "/path/to/manga/example" \
+  --recover-wikipedia --wikipedia-title "Example"
 ```
 
-Recovery reuses local images. It does not request Komiku pages or download images. Normal pack runs remain offline.
+Recovery reuses local images. It does not request Komiku pages or download
+images. Normal pack runs remain offline.
 
 ## CBZ presets
 
@@ -102,7 +118,8 @@ Recovery reuses local images. It does not request Komiku pages or download image
 | `tiny` | 1200 px | 60 | Re-encoded when decodable |
 | `raw` | Unchanged | Unchanged | Preserved |
 
-Resizing keeps the original aspect ratio and never enlarges smaller images. Archives are written to temporary `.part` files and published atomically.
+Resizing keeps the original aspect ratio and never enlarges smaller images.
+Archives are written to temporary `.part` files and published atomically.
 
 ## Configuration
 
@@ -128,7 +145,8 @@ Configuration fields:
 }
 ```
 
-CLI flags override saved values for the current run. Default values are the current directory, a `200ms` image delay, and the `medium` preset.
+CLI flags override saved values for the current run. Default values are the
+current directory, a `200ms` image delay, and the `medium` preset.
 
 ## Download safety
 
@@ -157,4 +175,6 @@ go build -o /tmp/komiku-cli ./cmd/komiku-cli
 
 ## Disclaimer
 
-This project is an independent client and is not affiliated with Komiku. Follow the source website's terms and applicable law. Download only content you are authorized to access.
+This project is an independent client and is not affiliated with Komiku.
+Follow the source website's terms and applicable law. Download only content
+you are authorized to access.

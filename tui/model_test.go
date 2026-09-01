@@ -55,6 +55,9 @@ type fakeBackend struct {
 	standalonePackCalls   int
 	standalonePackDir     string
 	standalonePackRecover bool
+	presetSaved           packer.Preset
+	presetCalls           int
+	presetErr             error
 }
 
 func (f *fakeBackend) Search(_ context.Context, query string) ([]komiku.Series, error) {
@@ -66,6 +69,11 @@ func (f *fakeBackend) SetOutputRoot(path string, persist bool) (string, error) {
 	f.outputRoot = path
 	f.outputPersist = persist
 	return path, f.outputSetErr
+}
+func (f *fakeBackend) SetPreset(preset packer.Preset) error {
+	f.presetCalls++
+	f.presetSaved = preset
+	return f.presetErr
 }
 func (f *fakeBackend) DownloadedSeries(string) ([]string, error) {
 	return append([]string(nil), f.downloadedSeries...), f.downloadedSeriesErr
@@ -146,127 +154,110 @@ func updateModel(t *testing.T, current model, message tea.Msg) (model, tea.Cmd) 
 	return updated.(model), cmd
 }
 
-func TestHomeOffersDownloadAndPackWithoutTechnicalTerms(t *testing.T) {
+func TestSidebarDefaultsToSearch(t *testing.T) {
 	current := newModel(&fakeBackend{}, packer.Raw, true, nil, time.Now)
-	current.beginHome("/manga")
-	view := current.View()
-	for _, want := range []string{"What do you want to do?", "> Download manga", "Pack downloaded manga"} {
-		if !strings.Contains(view, want) {
-			t.Fatalf("missing %q from home:\n%s", want, view)
-		}
+	current.outputRoot = "/manga"
+	if current.nav != 0 || current.screen != searchScreen || !current.input.Focused() {
+		t.Fatalf("startup state nav=%d screen=%v focused=%v", current.nav, current.screen, current.input.Focused())
 	}
-	current, _ = updateModel(t, current, tea.KeyMsg{Type: tea.KeyEnter})
-	if current.screen != outputScreen {
-		t.Fatalf("download did not open storage form: screen=%v", current.screen)
+	view := current.View()
+	for _, want := range []string{"komiku-cli", "> Search", "  To CBZ", "  Downloads", "  Settings", "Save to:"} {
+		if !strings.Contains(view, want) {
+			t.Fatalf("missing %q in sidebar:\n%s", want, view)
+		}
 	}
 }
 
-func TestHomePackListsDownloadedSeriesAndLegacyConfirmation(t *testing.T) {
+func TestTabCyclesNavMenusAndLoadsLists(t *testing.T) {
+	service := &fakeBackend{downloadedSeries: []string{"/manga/sakamoto-days"}, standalonePackOutput: "packed"}
+	current := newModel(service, packer.Raw, true, nil, time.Now)
+	current.outputRoot = "/manga"
+	current, cmd := updateModel(t, current, tea.KeyMsg{Type: tea.KeyTab})
+	if current.nav != 1 || current.screen != packSeriesScreen || cmd == nil {
+		t.Fatalf("tab did not open To CBZ: nav=%d screen=%v cmd=%v", current.nav, current.screen, cmd)
+	}
+	current, _ = updateModel(t, current, cmd())
+	if !strings.Contains(current.View(), "sakamoto-days") {
+		t.Fatalf("To CBZ list missing series:\n%s", current.View())
+	}
+	current, cmd = updateModel(t, current, tea.KeyMsg{Type: tea.KeyTab})
+	if current.nav != 2 || current.screen != downloadsScreen || cmd == nil {
+		t.Fatalf("tab did not open Downloads: nav=%d screen=%v cmd=%v", current.nav, current.screen, cmd)
+	}
+	current, _ = updateModel(t, current, cmd())
+	if !strings.Contains(current.View(), "ready to pack") {
+		t.Fatalf("Downloads list missing status:\n%s", current.View())
+	}
+	current, _ = updateModel(t, current, tea.KeyMsg{Type: tea.KeyTab})
+	if current.nav != 3 || current.screen != settingsScreen || !current.outputInput.Focused() || current.outputInput.Value() != "/manga" {
+		t.Fatalf("tab did not open Settings: nav=%d screen=%v value=%q", current.nav, current.screen, current.outputInput.Value())
+	}
+	if !strings.Contains(current.View(), "CBZ preset: raw") {
+		t.Fatalf("settings missing preset:\n%s", current.View())
+	}
+	current, _ = updateModel(t, current, tea.KeyMsg{Type: tea.KeyTab})
+	if current.nav != 0 || current.screen != searchScreen || !current.input.Focused() || current.outputInput.Focused() {
+		t.Fatalf("tab from Settings did not return to focused Search: nav=%d screen=%v search-focused=%v settings-focused=%v", current.nav, current.screen, current.input.Focused(), current.outputInput.Focused())
+	}
+	current, _ = updateModel(t, current, tea.KeyMsg{Type: tea.KeyShiftTab})
+	if current.nav != 3 || current.screen != settingsScreen || !current.outputInput.Focused() {
+		t.Fatalf("shift tab from Search did not return to Settings: nav=%d screen=%v focused=%v", current.nav, current.screen, current.outputInput.Focused())
+	}
+	current, _ = updateModel(t, current, tea.KeyMsg{Type: tea.KeyEsc})
+	if current.nav != 0 || current.screen != searchScreen {
+		t.Fatalf("settings esc did not return to Search: nav=%d screen=%v", current.nav, current.screen)
+	}
+}
+
+func TestDigitShortcutsNeedUnfocusedInput(t *testing.T) {
+	service := &fakeBackend{downloadedSeries: []string{"/manga/series"}}
+	current := newModel(service, packer.Raw, true, nil, time.Now)
+	current.outputRoot = "/manga"
+	current, _ = updateModel(t, current, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'2'}})
+	if current.input.Value() != "2" || current.nav != 0 {
+		t.Fatalf("focused input lost digit: value=%q nav=%d", current.input.Value(), current.nav)
+	}
+	current.input.Blur()
+	current, cmd := updateModel(t, current, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'2'}})
+	if current.nav != 1 || cmd == nil {
+		t.Fatalf("digit 2 did not open To CBZ: nav=%d cmd=%v", current.nav, cmd)
+	}
+	current, _ = updateModel(t, current, cmd())
+	if current.screen != packSeriesScreen {
+		t.Fatalf("digit nav list missing: screen=%v", current.screen)
+	}
+}
+
+func TestNavToCBZLegacyConfirmation(t *testing.T) {
 	service := &fakeBackend{downloadedSeries: []string{"/manga/sakamoto-days"}, packNeedsRecovery: true, standalonePackOutput: "packed"}
 	current := newModel(service, packer.Raw, true, nil, time.Now)
-	current.beginHome("/manga")
-	current, _ = updateModel(t, current, tea.KeyMsg{Type: tea.KeyDown})
-	current, cmd := updateModel(t, current, tea.KeyMsg{Type: tea.KeyEnter})
-	if cmd == nil {
-		t.Fatal("pack did not scan downloads")
-	}
-	current, _ = updateModel(t, current, cmd())
-	if current.screen != packSeriesScreen || !strings.Contains(current.View(), "sakamoto-days") {
-		t.Fatalf("download list missing: state=%+v\n%s", current, current.View())
-	}
-	current, cmd = updateModel(t, current, tea.KeyMsg{Type: tea.KeyEnter})
-	if cmd == nil {
-		t.Fatal("series selection did not inspect manifest")
-	}
-	current, _ = updateModel(t, current, cmd())
+	current.outputRoot = "/manga"
+	_, listCmd := current.switchNav(1)
+	current, _ = updateModel(t, current, listCmd())
+	current, inspectCmd := updateModel(t, current, tea.KeyMsg{Type: tea.KeyEnter})
+	current, _ = updateModel(t, current, inspectCmd())
 	if current.screen != packRecoveryScreen || !strings.Contains(current.View(), "one Wikipedia lookup") || service.standalonePackCalls != 0 {
 		t.Fatalf("legacy confirmation missing: state=%+v calls=%d\n%s", current, service.standalonePackCalls, current.View())
 	}
-	current, cmd = updateModel(t, current, tea.KeyMsg{Type: tea.KeyEnter})
-	if cmd == nil || current.screen != standalonePackingScreen {
+	current, packCmd := updateModel(t, current, tea.KeyMsg{Type: tea.KeyEnter})
+	if packCmd == nil || current.screen != standalonePackingScreen {
 		t.Fatalf("confirmation did not start pack: state=%+v", current)
 	}
-	current, _ = updateModel(t, current, cmd())
-	if current.screen != standalonePackDoneScreen || service.standalonePackCalls != 1 || !service.standalonePackRecover || service.standalonePackDir != "/manga/sakamoto-days" {
+	current, _ = updateModel(t, current, packCmd())
+	if current.screen != standalonePackDoneScreen || service.standalonePackCalls != 1 || !service.standalonePackRecover || service.standalonePackDir != "/manga/sakamoto-days" || current.nav != 1 {
 		t.Fatalf("legacy pack result wrong: state=%+v service=%+v", current, service)
 	}
-}
-
-func TestPackRecoveryQQuits(t *testing.T) {
-	current := newModel(&fakeBackend{}, packer.Raw, true, nil, time.Now)
-	current.screen = packRecoveryScreen
-	_, cmd := updateModel(t, current, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'q'}})
-	if cmd == nil {
-		t.Fatal("q did not quit recovery confirmation")
+	_, backCmd := updateModel(t, current, tea.KeyMsg{Type: tea.KeyEnter})
+	if backCmd == nil {
+		t.Fatal("done enter did not rescan To CBZ list")
 	}
 }
 
-func TestStandalonePackStartsSpinnerInInteractiveMode(t *testing.T) {
-	current := newModel(&fakeBackend{}, packer.Raw, false, nil, time.Now)
-	current.packSeriesDir = "/manga/series"
-	_, cmd := current.startStandalonePack(false)
-	if cmd == nil {
-		t.Fatal("standalone pack returned no command")
-	}
-	message := cmd()
-	batch, ok := message.(tea.BatchMsg)
-	if !ok || len(batch) != 2 {
-		t.Fatalf("standalone pack command=%T %#v, want backend and spinner batch", message, message)
-	}
-}
-
-func TestStandalonePackCancellationQuitsAfterCommandReturns(t *testing.T) {
-	service := &fakeBackend{standalonePackErr: context.Canceled}
-	current := newModel(service, packer.Raw, true, nil, time.Now)
-	current.packSeriesDir = "/manga/series"
-	started, cmd := current.startStandalonePack(false)
-	current = started.(model)
-	current, _ = updateModel(t, current, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'q'}})
-	if !current.stopping {
-		t.Fatal("pack cancellation did not enter stopping state")
-	}
-	updated, quit := current.Update(cmd())
-	current = updated.(model)
-	if quit == nil || current.packCancel != nil {
-		t.Fatalf("cancelled pack did not quit: state=%+v cmd=%v", current, quit)
-	}
-}
-
-func TestPackOtherFolderAcceptsTypedPath(t *testing.T) {
-	service := &fakeBackend{standalonePackOutput: "packed elsewhere"}
-	current := newModel(service, packer.Raw, true, nil, time.Now)
-	current.beginHome("/manga")
-	current.homeCursor = 1
-	_, listCmd := updateModel(t, current, tea.KeyMsg{Type: tea.KeyEnter})
-	current, _ = updateModel(t, current, listCmd())
-	if current.screen != packSeriesScreen || !strings.Contains(current.View(), "Other folder...") {
-		t.Fatalf("other folder choice missing:\n%s", current.View())
-	}
-	current, _ = updateModel(t, current, tea.KeyMsg{Type: tea.KeyEnter})
-	if current.screen != packPathScreen || !current.packPathInput.Focused() {
-		t.Fatalf("other folder did not open path input: state=%+v", current)
-	}
-	current.packPathInput.SetValue("/archive/manga with q")
-	current, inspectCmd := updateModel(t, current, tea.KeyMsg{Type: tea.KeyEnter})
-	if inspectCmd == nil {
-		t.Fatal("typed path was not inspected")
-	}
-	current, packCmd := updateModel(t, current, inspectCmd())
-	if current.screen != standalonePackingScreen || packCmd == nil {
-		t.Fatalf("typed manifest path did not start packing: state=%+v", current)
-	}
-	current, _ = updateModel(t, current, packCmd())
-	if service.standalonePackDir != "/archive/manga with q" {
-		t.Fatalf("packed dir=%q", service.standalonePackDir)
-	}
-}
-
-func TestHomePackManifestSeriesPacksOfflineWithoutConfirmation(t *testing.T) {
+func TestNavToCBZManifestSeriesPacksOffline(t *testing.T) {
 	service := &fakeBackend{downloadedSeries: []string{"/manga/manifest-series"}, standalonePackOutput: "packed offline"}
 	current := newModel(service, packer.Raw, true, nil, time.Now)
-	current.beginHome("/manga")
-	current.homeCursor = 1
-	_, listCmd := updateModel(t, current, tea.KeyMsg{Type: tea.KeyEnter})
+	current.outputRoot = "/manga"
+	_, listCmd := current.switchNav(1)
 	current, _ = updateModel(t, current, listCmd())
 	current, inspectCmd := updateModel(t, current, tea.KeyMsg{Type: tea.KeyEnter})
 	current, packCmd := updateModel(t, current, inspectCmd())
@@ -274,71 +265,185 @@ func TestHomePackManifestSeriesPacksOfflineWithoutConfirmation(t *testing.T) {
 		t.Fatalf("manifest pack did not start offline: state=%+v", current)
 	}
 	current, _ = updateModel(t, current, packCmd())
-	if current.screen != standalonePackDoneScreen || service.standalonePackRecover || !strings.Contains(current.View(), "packed offline") {
+	if current.screen != standalonePackDoneScreen || service.standalonePackRecover || !strings.Contains(current.View(), "packed offline") || current.nav != 1 {
 		t.Fatalf("offline result wrong: state=%+v\n%s", current, current.View())
 	}
 }
 
-func TestOutputSetupStartsAsFocusedFormWithCurrentPath(t *testing.T) {
+func TestToCBZOtherFolderAcceptsTypedPath(t *testing.T) {
+	service := &fakeBackend{standalonePackOutput: "packed elsewhere"}
+	current := newModel(service, packer.Raw, true, nil, time.Now)
+	current.outputRoot = "/manga"
+	_, listCmd := current.switchNav(1)
+	current, _ = updateModel(t, current, listCmd())
+	if !strings.Contains(current.View(), "Other folder...") {
+		t.Fatalf("other folder choice missing:\n%s", current.View())
+	}
+	current.packSeriesCursor = len(current.packSeries)
+	current, _ = updateModel(t, current, tea.KeyMsg{Type: tea.KeyEnter})
+	if current.screen != packPathScreen || !current.packPathInput.Focused() {
+		t.Fatalf("other folder did not open path input: state=%+v", current)
+	}
+	for _, character := range "/archive/manga with q" {
+		current, _ = updateModel(t, current, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{character}})
+	}
+	if current.packPathInput.Value() != "/archive/manga with q" {
+		t.Fatalf("path input rejected ordinary characters: %q", current.packPathInput.Value())
+	}
+	current, inspectCmd := updateModel(t, current, tea.KeyMsg{Type: tea.KeyEnter})
+	current, packCmd := updateModel(t, current, inspectCmd())
+	current, _ = updateModel(t, current, packCmd())
+	if service.standalonePackDir != "/archive/manga with q" || current.screen != standalonePackDoneScreen {
+		t.Fatalf("typed path pack wrong: dir=%q screen=%v", service.standalonePackDir, current.screen)
+	}
+}
+
+func TestDownloadsShowStatusesAndPackShortcuts(t *testing.T) {
+	service := &fakeBackend{downloadedSeries: []string{"/manga/needs-recovery", "/manga/manifest-series"}, packNeedsRecovery: true, standalonePackOutput: "packed"}
+	current := newModel(service, packer.Raw, true, nil, time.Now)
+	current.outputRoot = "/manga"
+	_, statusCmd := current.switchNav(2)
+	current, _ = updateModel(t, current, statusCmd())
+	view := current.View()
+	if !strings.Contains(view, "needs-recovery  needs one-time recovery") || !strings.Contains(view, "manifest-series  needs one-time recovery") {
+		t.Fatalf("status rows missing:\n%s", view)
+	}
+	current, inspectCmd := updateModel(t, current, tea.KeyMsg{Type: tea.KeyEnter})
+	current, _ = updateModel(t, current, inspectCmd())
+	if current.screen != packRecoveryScreen || current.nav != 2 || !current.packFromDownloads {
+		t.Fatalf("downloads pack did not open recovery: state=%+v", current)
+	}
+	current, _ = updateModel(t, current, tea.KeyMsg{Type: tea.KeyEsc})
+	if current.screen != downloadsScreen {
+		t.Fatalf("recovery esc did not return to downloads: screen=%v", current.screen)
+	}
+}
+
+func TestDownloadsDirectPackReturnsToDownloads(t *testing.T) {
+	service := &fakeBackend{downloadedSeries: []string{"/manga/manifest-series"}, standalonePackOutput: "packed offline"}
+	current := newModel(service, packer.Raw, true, nil, time.Now)
+	current.outputRoot = "/manga"
+	_, statusCmd := current.switchNav(2)
+	current, _ = updateModel(t, current, statusCmd())
+	current, inspectCmd := updateModel(t, current, tea.KeyMsg{Type: tea.KeyEnter})
+	current, packCmd := updateModel(t, current, inspectCmd())
+	if current.screen != standalonePackingScreen || packCmd == nil || service.standalonePackRecover {
+		t.Fatalf("downloads direct pack wrong: state=%+v service=%+v", current, service)
+	}
+	current, _ = updateModel(t, current, packCmd())
+	if current.screen != standalonePackDoneScreen || current.nav != 2 {
+		t.Fatalf("downloads pack done wrong: state=%+v", current)
+	}
+	current, backCmd := updateModel(t, current, tea.KeyMsg{Type: tea.KeyEnter})
+	if backCmd == nil || current.screen != downloadsScreen || current.packFromDownloads || current.nav != 2 {
+		t.Fatalf("done enter did not return to downloads: state=%+v cmd=%v", current, backCmd)
+	}
+	current, _ = updateModel(t, current, backCmd())
+	if current.screen != downloadsScreen || current.packFromDownloads {
+		t.Fatalf("done return wrong: state=%+v", current)
+	}
+}
+
+func TestSettingsPrefillFocusAndSave(t *testing.T) {
 	service := &fakeBackend{}
 	current := newModel(service, packer.Raw, true, nil, time.Now)
-	current.beginOutputSetup("/configured/manga")
+	current.outputRoot = "/configured/manga"
+	for i := 0; i < 3; i++ {
+		current, _ = updateModel(t, current, tea.KeyMsg{Type: tea.KeyTab})
+	}
 	view := current.View()
-	for _, want := range []string{"Where should downloads go?", "/configured/manga", "[ ] Remember this location", "Enter continue"} {
+	for _, want := range []string{"Settings", "/configured/manga", "[ ] Remember this location", "CBZ preset: raw", "Up/Down option", "Tab next menu", "Enter save"} {
 		if !strings.Contains(view, want) {
-			t.Fatalf("missing %q in setup form:\n%s", want, view)
+			t.Fatalf("missing %q in settings:\n%s", want, view)
 		}
 	}
-	if current.screen != outputScreen || !current.outputInput.Focused() {
-		t.Fatalf("path input is not focused: %+v", current)
+	if !current.outputInput.Focused() {
+		t.Fatal("settings path input is not focused")
 	}
-}
-
-func TestOutputSetupEditsPathAndContinuesForSession(t *testing.T) {
-	service := &fakeBackend{}
-	current := newModel(service, packer.Raw, true, nil, time.Now)
-	current.beginOutputSetup("/old/manga")
-	current.outputInput.SetValue("/new/manga")
-	current, _ = updateModel(t, current, tea.KeyMsg{Type: tea.KeyEnter})
-	if current.screen != searchScreen || current.outputRoot != "/new/manga" || service.outputRoot != "/new/manga" || service.outputPersist || service.outputSetCalls != 1 {
-		t.Fatalf("session output not applied: state=%+v service=%+v", current, service)
+	current.outputInput.SetValue("")
+	for _, character := range "/new/manga" {
+		current, _ = updateModel(t, current, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{character}})
 	}
-}
-
-func TestOutputSetupSpaceTogglesRememberAndPersists(t *testing.T) {
-	service := &fakeBackend{}
-	current := newModel(service, packer.Raw, true, nil, time.Now)
-	current.beginOutputSetup("/default/manga")
-	current, _ = updateModel(t, current, tea.KeyMsg{Type: tea.KeyTab})
+	current, _ = updateModel(t, current, tea.KeyMsg{Type: tea.KeyDown})
 	current, _ = updateModel(t, current, tea.KeyMsg{Type: tea.KeySpace})
 	if !strings.Contains(current.View(), "[x] Remember this location") {
 		t.Fatalf("remember toggle missing:\n%s", current.View())
 	}
+	current, _ = updateModel(t, current, tea.KeyMsg{Type: tea.KeyDown})
+	current, _ = updateModel(t, current, tea.KeyMsg{Type: tea.KeyRight})
+	if !strings.Contains(current.View(), "CBZ preset: medium") {
+		t.Fatalf("preset cycling missing:\n%s", current.View())
+	}
+	current, _ = updateModel(t, current, tea.KeyMsg{Type: tea.KeyLeft})
+	current, _ = updateModel(t, current, tea.KeyMsg{Type: tea.KeyLeft})
 	current, _ = updateModel(t, current, tea.KeyMsg{Type: tea.KeyEnter})
-	if current.screen != searchScreen || !service.outputPersist || service.outputSetCalls != 1 {
-		t.Fatalf("default output not applied: state=%+v service=%+v", current, service)
+	if service.outputRoot != "/new/manga" || !service.outputPersist || service.outputSetCalls != 1 || service.presetSaved != packer.Tiny || service.presetCalls != 1 {
+		t.Fatalf("settings save wrong: service=%+v", service)
+	}
+	if current.outputRoot != "/new/manga" || current.preset != packer.Tiny || current.screen != settingsScreen || !strings.Contains(current.View(), "Settings saved.") {
+		t.Fatalf("settings state after save: state=%+v\n%s", current, current.View())
 	}
 }
 
-func TestOutputSetupAllowsQAndSpacesInFolderName(t *testing.T) {
-	service := &fakeBackend{}
+func TestSettingsKeepsEditingErrorsInline(t *testing.T) {
+	service := &fakeBackend{outputSetErr: errors.New("location is not writable")}
 	current := newModel(service, packer.Raw, true, nil, time.Now)
-	current.beginOutputSetup("")
+	current.outputRoot = "/invalid"
+	for i := 0; i < 3; i++ {
+		current, _ = updateModel(t, current, tea.KeyMsg{Type: tea.KeyTab})
+	}
+	current, _ = updateModel(t, current, tea.KeyMsg{Type: tea.KeyEnter})
+	if current.screen != settingsScreen || current.settingsCursor != 0 || !current.outputInput.Focused() || service.presetCalls != 0 || !strings.Contains(current.View(), "location is not writable") {
+		t.Fatalf("invalid location escaped settings: state=%+v\n%s", current, current.View())
+	}
+	current.outputInput.SetValue("")
 	for _, character := range "Manga queue" {
 		current, _ = updateModel(t, current, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{character}})
 	}
-	if current.outputInput.Value() != "Manga queue" || current.screen != outputScreen {
-		t.Fatalf("folder input rejected ordinary characters: value=%q screen=%v", current.outputInput.Value(), current.screen)
+	if current.outputInput.Value() != "Manga queue" {
+		t.Fatalf("folder input rejected ordinary characters: %q", current.outputInput.Value())
+	}
+	current.settingsCursor = 1
+	_, cmd := updateModel(t, current, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'q'}})
+	if cmd == nil {
+		t.Fatal("q did not quit settings while not editing")
 	}
 }
 
-func TestOutputSetupFailureStaysFocused(t *testing.T) {
-	service := &fakeBackend{outputSetErr: errors.New("location is not writable")}
+func TestSettingsEscReturnsToPreviousView(t *testing.T) {
+	service := &fakeBackend{downloadedSeries: []string{"/manga/series"}}
 	current := newModel(service, packer.Raw, true, nil, time.Now)
-	current.beginOutputSetup("/invalid")
-	current, _ = updateModel(t, current, tea.KeyMsg{Type: tea.KeyEnter})
-	if current.screen != outputScreen || !current.outputInput.Focused() || current.err == nil || !strings.Contains(current.View(), "location is not writable") {
-		t.Fatalf("invalid location escaped form: state=%+v\n%s", current, current.View())
+	current.outputRoot = "/manga"
+	_, listCmd := current.switchNav(1)
+	current, _ = updateModel(t, current, listCmd())
+	current, _ = updateModel(t, current, tea.KeyMsg{Type: tea.KeyTab})
+	current, _ = updateModel(t, current, tea.KeyMsg{Type: tea.KeyTab})
+	if current.nav != 3 || current.screen != settingsScreen {
+		t.Fatalf("settings not opened: nav=%d screen=%v", current.nav, current.screen)
+	}
+	current, backCmd := updateModel(t, current, tea.KeyMsg{Type: tea.KeyEsc})
+	if backCmd == nil || current.nav != 2 {
+		t.Fatalf("settings esc did not target Downloads: nav=%d cmd=%v", current.nav, backCmd)
+	}
+	current, _ = updateModel(t, current, backCmd())
+	if current.screen != downloadsScreen {
+		t.Fatalf("return list missing: screen=%v", current.screen)
+	}
+}
+
+func TestToCBZEscRescansList(t *testing.T) {
+	service := &fakeBackend{downloadedSeries: []string{"/manga/series"}}
+	current := newModel(service, packer.Raw, true, nil, time.Now)
+	current.outputRoot = "/manga"
+	_, listCmd := current.switchNav(1)
+	current, _ = updateModel(t, current, listCmd())
+	current, rescanCmd := updateModel(t, current, tea.KeyMsg{Type: tea.KeyEsc})
+	if rescanCmd == nil {
+		t.Fatal("esc did not rescan To CBZ list")
+	}
+	current, _ = updateModel(t, current, rescanCmd())
+	if current.screen != packSeriesScreen || !strings.Contains(current.View(), "series") {
+		t.Fatalf("rescan lost list: screen=%v\n%s", current.screen, current.View())
 	}
 }
 

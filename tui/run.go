@@ -88,7 +88,8 @@ func Run(ctx context.Context, input io.Reader, output, stderr io.Writer, depende
 	renderer := lipgloss.NewRenderer(programOutput)
 	inner := newModel(backend, packer.Preset(config.Preset), plain, renderer, dependencies.Now)
 	inner.outputRoot = config.OutputRoot
-	inner.beginHome(config.OutputRoot)
+	inner.screen = searchScreen
+	inner.input.Focus()
 	options := []tea.ProgramOption{tea.WithInput(input), tea.WithOutput(programOutput), tea.WithoutSignalHandler()}
 	if !plain {
 		options = append(options, tea.WithAltScreen())
@@ -237,6 +238,17 @@ func normalizeOutputRoot(path, home string) (string, error) {
 		return "", errors.New("storage location is not a directory")
 	}
 	return filepath.Clean(abs), nil
+}
+
+func (b *realBackend) SetPreset(preset packer.Preset) error {
+	next := b.configFile
+	next.Preset = string(preset)
+	if err := cli.SaveFileConfig(b.configPath, next); err != nil {
+		return fmt.Errorf("save pack preset: %w", err)
+	}
+	b.configFile = next
+	b.config.Preset = string(preset)
+	return nil
 }
 
 func (b *realBackend) DownloadedSeries(outputRoot string) ([]string, error) {

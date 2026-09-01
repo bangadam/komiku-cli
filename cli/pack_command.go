@@ -3,13 +3,15 @@ package cli
 import (
 	"context"
 	"errors"
-	"flag"
 	"fmt"
 	"io"
 	"net/http"
 	"os"
 	"path/filepath"
 	"strings"
+
+	"github.com/spf13/cobra"
+	"github.com/spf13/pflag"
 
 	packer "github.com/bangadam/komiku-cli/pack"
 )
@@ -18,25 +20,27 @@ const packCommandUsage = "usage: komiku-cli pack <series-dir> [--vol LIST] [--pr
 
 var executePreparedPack = PackPreparedVolumes
 
-func runPack(ctx context.Context, args []string, stdout io.Writer, dependencies Dependencies) error {
-	if len(args) == 0 || strings.HasPrefix(args[0], "-") {
-		return errors.New(packCommandUsage)
+func NewPackCommand(dependencies Dependencies) *cobra.Command {
+	cmd := &cobra.Command{
+		Use:   "pack <series-dir>",
+		Short: "Pack downloaded chapters into CBZ archives",
+		Args:  exactOneArg(packCommandUsage),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			return runPack(cmd.Context(), args[0], cmd.Flags(), cmd.OutOrStdout(), dependencies)
+		},
 	}
-	seriesDir := args[0]
-	flags := flag.NewFlagSet("pack", flag.ContinueOnError)
-	flags.SetOutput(io.Discard)
-	var volumeExpression, presetName, wikipediaTitle string
-	var recoverWikipedia bool
-	flags.StringVar(&volumeExpression, "vol", "", "volume list/range")
-	flags.StringVar(&presetName, "preset", DefaultPreset, "pack preset")
-	flags.BoolVar(&recoverWikipedia, "recover-wikipedia", false, "recover a legacy flat run from English Wikipedia")
-	flags.StringVar(&wikipediaTitle, "wikipedia-title", "", "English Wikipedia series title override")
-	if err := flags.Parse(args[1:]); err != nil {
-		return err
-	}
-	if flags.NArg() != 0 {
-		return fmt.Errorf("unexpected positional argument %q", flags.Arg(0))
-	}
+	cmd.Flags().String("vol", "", "volume list/range")
+	cmd.Flags().String("preset", DefaultPreset, "pack preset")
+	cmd.Flags().Bool("recover-wikipedia", false, "recover a legacy flat run from English Wikipedia")
+	cmd.Flags().String("wikipedia-title", "", "English Wikipedia series title override")
+	return cmd
+}
+
+func runPack(ctx context.Context, seriesDir string, flags *pflag.FlagSet, stdout io.Writer, dependencies Dependencies) error {
+	volumeExpression, _ := flags.GetString("vol")
+	presetName, _ := flags.GetString("preset")
+	wikipediaTitle, _ := flags.GetString("wikipedia-title")
+	recoverWikipedia, _ := flags.GetBool("recover-wikipedia")
 	preset, err := parsePackPreset(presetName)
 	if err != nil {
 		return err

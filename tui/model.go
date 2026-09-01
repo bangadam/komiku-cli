@@ -24,9 +24,7 @@ import (
 type screen uint8
 
 const (
-	homeScreen screen = iota
-	outputScreen
-	searchScreen
+	searchScreen screen = iota
 	chaptersScreen
 	rangeScreen
 	downloadingScreen
@@ -37,6 +35,8 @@ const (
 	packRecoveryScreen
 	standalonePackingScreen
 	standalonePackDoneScreen
+	downloadsScreen
+	settingsScreen
 )
 
 type rangeMode uint8
@@ -88,6 +88,7 @@ type batchRun interface {
 
 type backend interface {
 	SetOutputRoot(string, bool) (string, error)
+	SetPreset(packer.Preset) error
 	DownloadedSeries(string) ([]string, error)
 	PackNeedsRecovery(string) (bool, error)
 	PackDownloaded(context.Context, string, bool, packer.Preset) (string, error)
@@ -102,12 +103,18 @@ type backend interface {
 	Pack(context.Context, cli.PackPlan) ([]cli.PackOutcome, error)
 }
 
+type viewStyles struct {
+	frame   lipgloss.Style
+	heading lipgloss.Style
+	focus   lipgloss.Style
+}
+
 type model struct {
 	backend    backend
 	preset     packer.Preset
 	outputRoot string
 	plain      bool
-	renderer   *lipgloss.Renderer
+	styles     viewStyles
 	now        func() time.Time
 
 	screen screen
@@ -122,8 +129,13 @@ type model struct {
 	spinner       spinner.Model
 	progress      progress.Model
 
-	homeCursor            int
-	outputCursor          int
+	nav                   int
+	prevNav               int
+	settingsCursor        int
+	settingsPreset        packer.Preset
+	packFromDownloads     bool
+	downloads             []downloadStatus
+	downloadsCursor       int
 	outputPersist         bool
 	packSeries            []string
 	packSeriesCursor      int
@@ -193,7 +205,6 @@ func newModel(service backend, preset packer.Preset, plain bool, renderer *lipgl
 	input.Prompt = "> "
 	input.Placeholder = "Search title or paste series URL"
 	input.CharLimit = 512
-	input.Width = 60
 	input.PlaceholderStyle = lipgloss.NewStyle()
 	input.CompletionStyle = lipgloss.NewStyle()
 	input.Focus()
@@ -201,14 +212,12 @@ func newModel(service backend, preset packer.Preset, plain bool, renderer *lipgl
 	outputInput.Prompt = "> "
 	outputInput.Placeholder = "/path/to/manga"
 	outputInput.CharLimit = 1024
-	outputInput.Width = 60
 	outputInput.PlaceholderStyle = lipgloss.NewStyle()
 	outputInput.CompletionStyle = lipgloss.NewStyle()
 	packPathInput := textinput.New()
 	packPathInput.Prompt = "> "
 	packPathInput.Placeholder = "/path/to/downloaded-manga"
 	packPathInput.CharLimit = 1024
-	packPathInput.Width = 60
 	packPathInput.PlaceholderStyle = lipgloss.NewStyle()
 	packPathInput.CompletionStyle = lipgloss.NewStyle()
 	filter := textinput.New()
@@ -234,7 +243,7 @@ func newModel(service backend, preset packer.Preset, plain bool, renderer *lipgl
 		bar.Empty = '-'
 	}
 	return model{
-		backend: service, preset: preset, plain: plain, renderer: renderer, now: now,
+		backend: service, preset: preset, plain: plain, styles: newViewStyles(plain, renderer), now: now,
 		screen: searchScreen, width: 80, height: 24,
 		input: input, outputInput: outputInput, packPathInput: packPathInput, filter: filter, rangeInput: rangeInput, spinner: spin, progress: bar,
 		selected: make(map[string]bool), flat: true, assignments: make(map[string]int),
@@ -242,25 +251,85 @@ func newModel(service backend, preset packer.Preset, plain bool, renderer *lipgl
 	}
 }
 
-func (m *model) beginHome(outputRoot string) {
-	m.outputRoot = outputRoot
-	m.homeCursor = 0
+var navLabels = []string{"Search", "To CBZ", "Downloads", "Settings"}
+
+var presetCycle = []packer.Preset{packer.Medium, packer.Small, packer.Tiny, packer.Raw}
+
+func (m model) switchNav(index int) (tea.Model, tea.Cmd) {
+	m.prevNav = m.nav
+	m.nav = index
+	m.err, m.message = nil, ""
+	m.packFromDownloads = false
 	m.input.Blur()
 	m.outputInput.Blur()
-	m.err = nil
-	m.message = ""
-	m.screen = homeScreen
+	m.packPathInput.Blur()
+	m.filter.Blur()
+	m.rangeInput.Blur()
+	switch index {
+	case 0:
+		m.screen = searchScreen
+		m.input.Focus()
+		return m, textinput.Blink
+	case 1:
+		m.screen = packSeriesScreen
+		m.packSeriesCursor = 0
+		return m, m.rescanPackList()
+	case 2:
+		m.screen = downloadsScreen
+		m.downloadsCursor = 0
+		return m, m.rescanDownloads()
+	default:
+		m.beginSettings()
+		return m, textinput.Blink
+	}
 }
 
-func (m *model) beginOutputSetup(outputRoot string) {
-	m.outputRoot = outputRoot
-	m.outputCursor = 0
+func (m *model) beginSettings() {
+	m.screen = settingsScreen
+	m.settingsCursor = 0
 	m.outputPersist = false
-	m.outputInput.SetValue(outputRoot)
+	m.settingsPreset = m.preset
+	m.outputInput.SetValue(m.outputRoot)
 	m.outputInput.Focus()
 	m.input.Blur()
+	m.err, m.message = nil, ""
+}
+
+func (m *model) rescanPackList() tea.Cmd {
+	m.loading = true
+	m.loadingLabel = "Finding downloaded manga"
 	m.err = nil
-	m.screen = outputScreen
+	root := m.outputRoot
+	return func() tea.Msg {
+		series, err := m.backend.DownloadedSeries(root)
+		return downloadedSeriesMsg{series: series, err: err}
+	}
+}
+
+func (m *model) rescanDownloads() tea.Cmd {
+	m.loading = true
+	m.loadingLabel = "Finding downloaded manga"
+	m.err = nil
+	root := m.outputRoot
+	return func() tea.Msg {
+		series, err := m.backend.DownloadedSeries(root)
+		if err != nil {
+			return downloadsStatusMsg{err: err}
+		}
+		statuses := make([]downloadStatus, 0, len(series))
+		for _, dir := range series {
+			recover, err := m.backend.PackNeedsRecovery(dir)
+			if err != nil {
+				return downloadsStatusMsg{err: err}
+			}
+			statuses = append(statuses, downloadStatus{dir: dir, recover: recover})
+		}
+		return downloadsStatusMsg{statuses: statuses}
+	}
+}
+
+func (m model) anyInputFocused() bool {
+	return m.input.Focused() || m.outputInput.Focused() || m.packPathInput.Focused() || m.filter.Focused() || m.rangeInput.Focused()
 }
 
 func (m model) Init() tea.Cmd {
@@ -308,6 +377,16 @@ type packInspectMsg struct {
 type standalonePackMsg struct {
 	output string
 	err    error
+}
+
+type downloadStatus struct {
+	dir     string
+	recover bool
+}
+
+type downloadsStatusMsg struct {
+	statuses []downloadStatus
+	err      error
 }
 
 type engineEventMsg struct{ event cli.Event }
@@ -377,6 +456,7 @@ func (m model) Update(message tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		m.seriesURL = msg.seriesURL
 		m.chapters = msg.chapters
+		m.nav = 0
 		m.screen = chaptersScreen
 		m.selected = make(map[string]bool)
 		m.assignments = make(map[string]int)
@@ -422,6 +502,7 @@ func (m model) Update(message tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		m.applyVolumeJobs(msg.jobs, msg.volumes)
 		m.mappingProvenance = msg.provenance
+		m.nav = 0
 		m.screen = chaptersScreen
 		m.message = fmt.Sprintf("Selected %d chapters from %d volume(s).", len(msg.jobs), len(msg.volumes))
 		return m, nil
@@ -431,7 +512,18 @@ func (m model) Update(message tea.Msg) (tea.Model, tea.Cmd) {
 		if msg.err == nil {
 			m.packSeries = msg.series
 			m.packSeriesCursor = 0
+			m.nav = 1
 			m.screen = packSeriesScreen
+		}
+		return m, nil
+	case downloadsStatusMsg:
+		m.loading = false
+		m.err = msg.err
+		if msg.err == nil {
+			m.downloads = msg.statuses
+			m.downloadsCursor = 0
+			m.nav = 2
+			m.screen = downloadsScreen
 		}
 		return m, nil
 	case packInspectMsg:
@@ -439,6 +531,10 @@ func (m model) Update(message tea.Msg) (tea.Model, tea.Cmd) {
 		m.err = msg.err
 		if msg.err != nil {
 			return m, nil
+		}
+		m.nav = 1
+		if m.packFromDownloads {
+			m.nav = 2
 		}
 		m.packSeriesDir = msg.seriesDir
 		m.standalonePackRecover = msg.recover
@@ -453,6 +549,10 @@ func (m model) Update(message tea.Msg) (tea.Model, tea.Cmd) {
 		m.err = msg.err
 		if m.stopping {
 			return m, tea.Quit
+		}
+		m.nav = 1
+		if m.packFromDownloads {
+			m.nav = 2
 		}
 		m.screen = standalonePackDoneScreen
 		return m, nil
@@ -480,6 +580,7 @@ func (m model) Update(message tea.Msg) (tea.Model, tea.Cmd) {
 		if m.stopping {
 			return m, tea.Quit
 		}
+		m.nav = 0
 		m.screen = doneScreen
 		if msg.summary.Err != nil {
 			m.message = "Download data finished, but finalization failed."
@@ -493,6 +594,7 @@ func (m model) Update(message tea.Msg) (tea.Model, tea.Cmd) {
 		if m.stopping {
 			return m, tea.Quit
 		}
+		m.nav = 0
 		m.screen = doneScreen
 		switch {
 		case msg.err != nil:
@@ -507,11 +609,30 @@ func (m model) Update(message tea.Msg) (tea.Model, tea.Cmd) {
 		if msg.String() == "ctrl+c" {
 			return m.shutdown()
 		}
+		if m.screen != rangeScreen {
+			switch msg.String() {
+			case "tab":
+				return m.switchNav((m.nav + 1) % len(navLabels))
+			case "shift+tab":
+				return m.switchNav((m.nav + len(navLabels) - 1) % len(navLabels))
+			}
+			if !m.anyInputFocused() {
+				switch msg.String() {
+				case "1":
+					return m.switchNav(0)
+				case "2":
+					return m.switchNav(1)
+				case "3":
+					return m.switchNav(2)
+				case "4":
+					return m.switchNav(3)
+				}
+			}
+		}
+		if m.screen == settingsScreen {
+			return m.updateSettings(msg)
+		}
 		switch m.screen {
-		case homeScreen:
-			return m.updateHome(msg)
-		case outputScreen:
-			return m.updateOutput(msg)
 		case searchScreen:
 			return m.updateSearch(msg)
 		case chaptersScreen:
@@ -534,6 +655,8 @@ func (m model) Update(message tea.Msg) (tea.Model, tea.Cmd) {
 			return m.updatePacking(msg)
 		case standalonePackDoneScreen:
 			return m.updateStandalonePackDone(msg)
+		case downloadsScreen:
+			return m.updateDownloads(msg)
 		}
 	}
 	return m, tea.Batch(commands...)
@@ -578,27 +701,6 @@ func (m model) withSpinner(cmd tea.Cmd) tea.Cmd {
 	return tea.Batch(cmd, m.spinner.Tick)
 }
 
-func (m model) updateHome(key tea.KeyMsg) (tea.Model, tea.Cmd) {
-	switch key.String() {
-	case "up", "k", "down", "j":
-		m.homeCursor = (m.homeCursor + 1) % 2
-	case "enter":
-		if m.homeCursor == 0 {
-			m.beginOutputSetup(m.outputRoot)
-			return m, textinput.Blink
-		}
-		m.loading = true
-		m.err = nil
-		return m, func() tea.Msg {
-			series, err := m.backend.DownloadedSeries(m.outputRoot)
-			return downloadedSeriesMsg{series: series, err: err}
-		}
-	case "q", "esc":
-		return m, tea.Quit
-	}
-	return m, nil
-}
-
 func (m model) updatePackSeries(key tea.KeyMsg) (tea.Model, tea.Cmd) {
 	if m.loading {
 		return m, nil
@@ -617,6 +719,7 @@ func (m model) updatePackSeries(key tea.KeyMsg) (tea.Model, tea.Cmd) {
 			return m, textinput.Blink
 		}
 		dir := m.packSeries[m.packSeriesCursor]
+		m.packFromDownloads = false
 		m.loading = true
 		m.err = nil
 		return m, func() tea.Msg {
@@ -624,7 +727,9 @@ func (m model) updatePackSeries(key tea.KeyMsg) (tea.Model, tea.Cmd) {
 			return packInspectMsg{seriesDir: dir, recover: recover, err: err}
 		}
 	case "esc":
-		m.beginHome(m.outputRoot)
+		return m, m.rescanPackList()
+	case "q":
+		return m, tea.Quit
 	}
 	return m, nil
 }
@@ -660,7 +765,11 @@ func (m model) updatePackRecovery(key tea.KeyMsg) (tea.Model, tea.Cmd) {
 	case "enter":
 		return m.startStandalonePack(true)
 	case "esc":
-		m.screen = packSeriesScreen
+		if m.packFromDownloads {
+			m.screen = downloadsScreen
+		} else {
+			m.screen = packSeriesScreen
+		}
 	case "q":
 		return m, tea.Quit
 	}
@@ -685,46 +794,85 @@ func (m model) startStandalonePack(recover bool) (tea.Model, tea.Cmd) {
 func (m model) updateStandalonePackDone(key tea.KeyMsg) (tea.Model, tea.Cmd) {
 	switch key.String() {
 	case "enter", "esc":
-		m.beginHome(m.outputRoot)
+		target := 1
+		if m.packFromDownloads {
+			target = 2
+		}
+		return m.switchNav(target)
 	case "q":
 		return m, tea.Quit
 	}
 	return m, nil
 }
 
-func (m model) updateOutput(key tea.KeyMsg) (tea.Model, tea.Cmd) {
+func (m model) updateSettings(key tea.KeyMsg) (tea.Model, tea.Cmd) {
 	switch key.String() {
-	case "esc":
-		return m, tea.Quit
-	case "tab", "down":
-		m.outputCursor = (m.outputCursor + 1) % 2
-	case "shift+tab", "up":
-		m.outputCursor = (m.outputCursor + 1) % 2
+	case "down":
+		m.settingsCursor = (m.settingsCursor + 1) % 3
+		m.syncSettingsFocus()
+		m.err = nil
+		return m, textinput.Blink
+	case "up":
+		m.settingsCursor = (m.settingsCursor + 2) % 3
+		m.syncSettingsFocus()
+		m.err = nil
+		return m, textinput.Blink
 	case " ":
-		if m.outputCursor == 1 {
+		if m.settingsCursor == 1 {
 			m.outputPersist = !m.outputPersist
 			m.err = nil
 			return m, nil
 		}
+	case "left", "right":
+		if m.settingsCursor == 2 {
+			index := 0
+			for i, preset := range presetCycle {
+				if preset == m.settingsPreset {
+					index = i
+					break
+				}
+			}
+			if key.String() == "right" {
+				index = (index + 1) % len(presetCycle)
+			} else {
+				index = (index + len(presetCycle) - 1) % len(presetCycle)
+			}
+			m.settingsPreset = presetCycle[index]
+			m.err = nil
+		}
+		return m, nil
 	case "enter":
 		path := strings.TrimSpace(m.outputInput.Value())
 		if path == "" {
 			m.err = errors.New("enter a download folder")
-			return m, nil
+			m.settingsCursor = 0
+			m.syncSettingsFocus()
+			return m, textinput.Blink
 		}
 		resolved, err := m.backend.SetOutputRoot(path, m.outputPersist)
 		if err != nil {
 			m.err = err
+			m.settingsCursor = 0
+			m.syncSettingsFocus()
+			return m, textinput.Blink
+		}
+		if err := m.backend.SetPreset(m.settingsPreset); err != nil {
+			m.err = err
 			return m, nil
 		}
 		m.outputRoot = resolved
-		m.outputInput.Blur()
-		m.input.Focus()
+		m.preset = m.settingsPreset
 		m.err = nil
-		m.screen = searchScreen
+		m.message = "Settings saved."
 		return m, nil
+	case "esc":
+		return m.switchNav(m.prevNav)
+	case "q":
+		if m.settingsCursor != 0 {
+			return m, tea.Quit
+		}
 	}
-	if m.outputCursor == 0 {
+	if m.settingsCursor == 0 {
 		m.outputInput.Focus()
 		var cmd tea.Cmd
 		m.outputInput, cmd = m.outputInput.Update(key)
@@ -732,6 +880,46 @@ func (m model) updateOutput(key tea.KeyMsg) (tea.Model, tea.Cmd) {
 		return m, cmd
 	}
 	m.outputInput.Blur()
+	return m, nil
+}
+
+func (m *model) syncSettingsFocus() {
+	if m.settingsCursor == 0 {
+		m.outputInput.Focus()
+	} else {
+		m.outputInput.Blur()
+	}
+}
+
+func (m model) updateDownloads(key tea.KeyMsg) (tea.Model, tea.Cmd) {
+	if m.loading {
+		return m, nil
+	}
+	switch key.String() {
+	case "up", "k":
+		m.downloadsCursor = max(m.downloadsCursor-1, 0)
+	case "down", "j":
+		if len(m.downloads) > 0 {
+			m.downloadsCursor = min(m.downloadsCursor+1, len(m.downloads)-1)
+		}
+	case "enter":
+		if len(m.downloads) == 0 {
+			m.err = errors.New("no downloaded manga found in this location")
+			return m, nil
+		}
+		item := m.downloads[m.downloadsCursor]
+		m.packFromDownloads = true
+		m.loading = true
+		m.err = nil
+		return m, func() tea.Msg {
+			recover, err := m.backend.PackNeedsRecovery(item.dir)
+			return packInspectMsg{seriesDir: item.dir, recover: recover, err: err}
+		}
+	case "esc":
+		return m, m.rescanDownloads()
+	case "q":
+		return m, tea.Quit
+	}
 	return m, nil
 }
 

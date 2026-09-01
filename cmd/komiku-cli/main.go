@@ -3,7 +3,6 @@ package main
 import (
 	"context"
 	"errors"
-	"flag"
 	"fmt"
 	"io"
 	"os"
@@ -11,48 +10,86 @@ import (
 	"strings"
 	"syscall"
 
+	"github.com/spf13/cobra"
+
 	"github.com/bangadam/komiku-cli/cli"
 	"github.com/bangadam/komiku-cli/tui"
 )
 
+// exitError carries an already-reported terminal exit code.
+type exitError struct {
+	code int
+}
+
+func (e exitError) Error() string { return fmt.Sprintf("exit %d", e.code) }
+
 func main() {
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
-	if len(os.Args) == 1 {
-		os.Exit(tui.Run(ctx, os.Stdin, os.Stdout, os.Stderr, tui.Dependencies{}))
-	}
-	args := os.Args[1:]
-	if args[0] == "tui" || strings.HasPrefix(args[0], "-") {
-		if args[0] == "tui" {
-			args = args[1:]
+	root := newRootCommand(os.Stdin, os.Stdout, os.Stderr)
+	if err := root.ExecuteContext(ctx); err != nil {
+		var coded exitError
+		if errors.As(err, &coded) {
+			os.Exit(coded.code)
 		}
-		dependencies, err := parseTUIArgs(args)
-		if err != nil {
-			fmt.Fprintln(os.Stderr, "error:", err)
-			os.Exit(2)
-		}
-		os.Exit(tui.Run(ctx, os.Stdin, os.Stdout, os.Stderr, dependencies))
+		fmt.Fprintln(root.ErrOrStderr(), "error:", err)
+		os.Exit(1)
 	}
-	os.Exit(cli.Main(ctx, args, os.Stdout, os.Stderr, cli.Dependencies{}))
 }
 
-func parseTUIArgs(args []string) (tui.Dependencies, error) {
-	flags := flag.NewFlagSet("tui", flag.ContinueOnError)
-	flags.SetOutput(io.Discard)
+func newRootCommand(input io.Reader, stdout, stderr io.Writer) *cobra.Command {
+	root := cli.NewRootCommand(stdout, stderr, cli.Dependencies{})
+	root.SetIn(input)
+	root.Long = "komiku-cli downloads Komiku manga chapters and packs them into offline CBZ archives. Run without arguments for the interactive TUI."
 	var output string
-	flags.StringVar(&output, "out", "", "output directory for this run")
-	if err := flags.Parse(args); err != nil {
-		return tui.Dependencies{}, err
+	root.Args = cobra.ArbitraryArgs
+	root.RunE = func(cmd *cobra.Command, args []string) error {
+		if len(args) > 0 {
+			fmt.Fprintf(cmd.ErrOrStderr(), "unknown command %q; expected tui, dl, pack, or config\n", args[0])
+			return exitError{2}
+		}
+		dependencies, err := tuiDependencies(output, cmd.Flags().Changed("out"))
+		if err != nil {
+			fmt.Fprintln(cmd.ErrOrStderr(), "error:", err)
+			return exitError{2}
+		}
+		return runTUI(cmd.Context(), cmd.InOrStdin(), cmd.OutOrStdout(), cmd.ErrOrStderr(), dependencies)
 	}
-	if flags.NArg() != 0 {
-		return tui.Dependencies{}, fmt.Errorf("unexpected positional argument %q", flags.Arg(0))
+	root.Flags().StringVar(&output, "out", "", "output directory for this run")
+	root.AddCommand(newTUICommand())
+	return root
+}
+
+func newTUICommand() *cobra.Command {
+	var output string
+	cmd := &cobra.Command{
+		Use:   "tui",
+		Short: "Open the interactive TUI",
+		Args:  cobra.NoArgs,
+		RunE: func(cmd *cobra.Command, args []string) error {
+			dependencies, err := tuiDependencies(output, cmd.Flags().Changed("out"))
+			if err != nil {
+				fmt.Fprintln(cmd.ErrOrStderr(), "error:", err)
+				return exitError{2}
+			}
+			return runTUI(cmd.Context(), cmd.InOrStdin(), cmd.OutOrStdout(), cmd.ErrOrStderr(), dependencies)
+		},
 	}
-	outputSet := false
-	flags.Visit(func(flag *flag.Flag) {
-		outputSet = outputSet || flag.Name == "out"
-	})
-	if outputSet && (strings.TrimSpace(output) == "" || strings.IndexByte(output, 0) >= 0) {
+	cmd.Flags().StringVar(&output, "out", "", "output directory for this run")
+	return cmd
+}
+
+func tuiDependencies(output string, set bool) (tui.Dependencies, error) {
+	if set && (strings.ContainsRune(output, 0) || strings.TrimSpace(output) == "") {
 		return tui.Dependencies{}, errors.New("--out must be a non-empty directory")
 	}
 	return tui.Dependencies{OutputRoot: output}, nil
+}
+
+func runTUI(ctx context.Context, input io.Reader, stdout, stderr io.Writer, dependencies tui.Dependencies) error {
+	code := tui.Run(ctx, input, stdout, stderr, dependencies)
+	if code == 0 {
+		return nil
+	}
+	return exitError{code}
 }

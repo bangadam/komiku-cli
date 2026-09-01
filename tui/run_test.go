@@ -15,6 +15,7 @@ import (
 
 	"github.com/bangadam/komiku-cli/cli"
 	"github.com/bangadam/komiku-cli/komiku"
+	packer "github.com/bangadam/komiku-cli/pack"
 )
 
 func TestANSIFreeWriterStripsSplitControlSequences(t *testing.T) {
@@ -120,6 +121,26 @@ func TestRealBackendOutputRootSessionAndPersistentChanges(t *testing.T) {
 	}
 	if backend.config.OutputRoot != defaultRoot || saved.OutputRoot != defaultRoot || saved.ImageDelay != "1s" || saved.Preset != "raw" {
 		t.Fatalf("backend=%#v saved=%#v", backend.config, saved)
+	}
+}
+
+func TestRealBackendSetPresetPersistsConfig(t *testing.T) {
+	root := t.TempDir()
+	configPath := filepath.Join(root, "config", "config.json")
+	fileConfig := cli.FileConfig{OutputRoot: filepath.Join(root, "manga"), ImageDelay: "1s", Preset: "raw"}
+	if err := cli.SaveFileConfig(configPath, fileConfig); err != nil {
+		t.Fatal(err)
+	}
+	backend := &realBackend{config: cli.Config{OutputRoot: fileConfig.OutputRoot, ImageDelay: time.Second, Preset: "raw"}, configFile: fileConfig, configPath: configPath}
+	if err := backend.SetPreset(packer.Tiny); err != nil {
+		t.Fatalf("SetPreset: %v", err)
+	}
+	if backend.config.Preset != "tiny" || backend.configFile.Preset != "tiny" {
+		t.Fatalf("backend preset not updated: %#v %#v", backend.config, backend.configFile)
+	}
+	saved, err := cli.LoadFileConfig(configPath)
+	if err != nil || saved.Preset != "tiny" || saved.OutputRoot != fileConfig.OutputRoot || saved.ImageDelay != "1s" {
+		t.Fatalf("saved=%#v err=%v", saved, err)
 	}
 }
 

@@ -3,7 +3,6 @@ package cli
 import (
 	"context"
 	"errors"
-	"flag"
 	"fmt"
 	"io"
 	"net/http"
@@ -15,36 +14,23 @@ import (
 	"strings"
 	"time"
 
+	"github.com/spf13/cobra"
+	"github.com/spf13/pflag"
+
 	"github.com/bangadam/komiku-cli/komiku"
 	packer "github.com/bangadam/komiku-cli/pack"
 	"github.com/bangadam/komiku-cli/store"
 )
 
-type stringFlag struct {
-	value string
-	set   bool
+const dlCommandUsage = "usage: komiku-cli dl <series-url> [--ch RANGE | --vol RANGE] --no-tui [--flat] [--pack --preset medium|small|tiny|raw]"
+
+// exitCodeError carries an already-reported exit code past cobra without a
+// second "error:" line.
+type exitCodeError struct {
+	code int
 }
 
-func (f *stringFlag) String() string { return f.value }
-func (f *stringFlag) Set(value string) error {
-	f.value, f.set = value, true
-	return nil
-}
-
-type durationFlag struct {
-	value time.Duration
-	set   bool
-}
-
-func (f *durationFlag) String() string { return f.value.String() }
-func (f *durationFlag) Set(value string) error {
-	duration, err := time.ParseDuration(value)
-	if err != nil {
-		return err
-	}
-	f.value, f.set = duration, true
-	return nil
-}
+func (e exitCodeError) Error() string { return fmt.Sprintf("exit %d", e.code) }
 
 type Dependencies struct {
 	HTTP       *http.Client
@@ -53,57 +39,100 @@ type Dependencies struct {
 }
 
 func Main(ctx context.Context, args []string, stdout, stderr io.Writer, dependencies Dependencies) int {
-	if len(args) == 0 {
-		fmt.Fprintln(stderr, "usage: komiku-cli dl <series-url> [--ch RANGE | --vol RANGE] --no-tui [--flat] [--pack --preset medium|small|tiny|raw]")
-		fmt.Fprintln(stderr, packCommandUsage)
-		fmt.Fprintln(stderr, "usage: komiku-cli config [--out DIR]")
-		return 2
+	root := NewRootCommand(stdout, stderr, dependencies)
+	if args == nil {
+		args = []string{}
 	}
-	var err error
-	switch args[0] {
-	case "dl":
-		err = runDownload(ctx, args[1:], stdout, dependencies)
-	case "pack":
-		err = runPack(ctx, args[1:], stdout, dependencies)
-	case "config":
-		err = runConfig(args[1:], stdout, dependencies)
-	default:
-		fmt.Fprintf(stderr, "unknown command %q; expected dl, pack, or config\n", args[0])
-		return 2
-	}
-	if err != nil {
+	root.SetArgs(args)
+	if err := root.ExecuteContext(ctx); err != nil {
+		var coded exitCodeError
+		if errors.As(err, &coded) {
+			return coded.code
+		}
 		fmt.Fprintln(stderr, "error:", err)
 		return 1
 	}
 	return 0
 }
 
-func runDownload(ctx context.Context, args []string, stdout io.Writer, dependencies Dependencies) error {
-	if len(args) == 0 || strings.HasPrefix(args[0], "-") {
-		return errors.New("usage: komiku-cli dl <series-url> [--ch RANGE | --vol RANGE] --no-tui [--flat] [--pack --preset medium|small|tiny|raw]")
+func printHeadlessUsage(stderr io.Writer) {
+	fmt.Fprintln(stderr, dlCommandUsage)
+	fmt.Fprintln(stderr, packCommandUsage)
+	fmt.Fprintln(stderr, "usage: komiku-cli config [--out DIR]")
+}
+
+func NewRootCommand(stdout, stderr io.Writer, dependencies Dependencies) *cobra.Command {
+	root := &cobra.Command{
+		Use:           "komiku-cli",
+		Short:         "Keyboard-first Komiku manga downloader and offline CBZ packer",
+		SilenceUsage:  true,
+		SilenceErrors: true,
+		Args:          cobra.ArbitraryArgs,
+		CompletionOptions: cobra.CompletionOptions{
+			DisableDefaultCmd: true,
+		},
+		RunE: func(cmd *cobra.Command, args []string) error {
+			if len(args) > 0 {
+				fmt.Fprintf(cmd.ErrOrStderr(), "unknown command %q; expected dl, pack, or config\n", args[0])
+				return exitCodeError{2}
+			}
+			printHeadlessUsage(cmd.ErrOrStderr())
+			return exitCodeError{2}
+		},
 	}
-	seriesURL := args[0]
-	flags := flag.NewFlagSet("dl", flag.ContinueOnError)
-	flags.SetOutput(io.Discard)
-	var chapterExpression, volumeExpression string
-	var noTUI, flat, pack bool
-	var output, delay, preset stringFlag
-	var workers int
-	flags.StringVar(&chapterExpression, "ch", "", "chapter list/range")
-	flags.StringVar(&volumeExpression, "vol", "", "volume list/range")
-	flags.BoolVar(&noTUI, "no-tui", false, "run headless")
-	flags.BoolVar(&flat, "flat", false, "store chapters without volume folders")
-	flags.BoolVar(&pack, "pack", false, "pack selected volumes after download")
-	flags.Var(&output, "out", "output directory")
-	flags.Var(&delay, "delay", "image request delay")
-	flags.Var(&preset, "preset", "pack preset")
-	flags.IntVar(&workers, "workers", 3, "chapter worker count")
-	if err := flags.Parse(args[1:]); err != nil {
-		return err
+	root.SetOut(stdout)
+	root.SetErr(stderr)
+	root.AddCommand(NewDownloadCommand(dependencies))
+	root.AddCommand(NewPackCommand(dependencies))
+	root.AddCommand(NewConfigCommand(dependencies))
+	return root
+}
+
+// exactOneArg rejects the old manual flag rules: no positional before the
+// series argument, exactly one series argument.
+func exactOneArg(usage string) cobra.PositionalArgs {
+	return func(cmd *cobra.Command, args []string) error {
+		if len(args) == 0 || strings.HasPrefix(args[0], "-") {
+			return errors.New(usage)
+		}
+		if len(args) > 1 {
+			return fmt.Errorf("unexpected positional argument %q", args[1])
+		}
+		return nil
 	}
-	if flags.NArg() != 0 {
-		return fmt.Errorf("unexpected positional argument %q", flags.Arg(0))
+}
+
+func NewDownloadCommand(dependencies Dependencies) *cobra.Command {
+	cmd := &cobra.Command{
+		Use:   "dl <series-url>",
+		Short: "Download chapters headlessly into the download store",
+		Args:  exactOneArg(dlCommandUsage),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			return runDownload(cmd.Context(), args[0], cmd.Flags(), cmd.OutOrStdout(), dependencies)
+		},
 	}
+	cmd.Flags().String("ch", "", "chapter list/range")
+	cmd.Flags().String("vol", "", "volume list/range")
+	cmd.Flags().Bool("no-tui", false, "run headless")
+	cmd.Flags().Bool("flat", false, "store chapters without volume folders")
+	cmd.Flags().Bool("pack", false, "pack selected volumes after download")
+	cmd.Flags().String("out", "", "output directory")
+	cmd.Flags().String("delay", "", "image request delay")
+	cmd.Flags().String("preset", "", "pack preset")
+	cmd.Flags().Int("workers", 3, "chapter worker count")
+	return cmd
+}
+
+func runDownload(ctx context.Context, seriesURL string, flags *pflag.FlagSet, stdout io.Writer, dependencies Dependencies) error {
+	chapterExpression, _ := flags.GetString("ch")
+	volumeExpression, _ := flags.GetString("vol")
+	noTUI, _ := flags.GetBool("no-tui")
+	flat, _ := flags.GetBool("flat")
+	pack, _ := flags.GetBool("pack")
+	output, _ := flags.GetString("out")
+	delay, _ := flags.GetString("delay")
+	preset, _ := flags.GetString("preset")
+	workers, _ := flags.GetInt("workers")
 	if !noTUI {
 		return errors.New("issues 01-13 support headless mode only; pass --no-tui")
 	}
@@ -135,18 +164,18 @@ func runDownload(ctx context.Context, args []string, stdout io.Writer, dependenc
 		return err
 	}
 	overrides := Overrides{}
-	if output.set {
-		overrides.OutputRoot = &output.value
+	if flags.Changed("out") {
+		overrides.OutputRoot = &output
 	}
-	if delay.set {
-		parsedDelay, err := time.ParseDuration(delay.value)
+	if flags.Changed("delay") {
+		parsedDelay, err := time.ParseDuration(delay)
 		if err != nil {
 			return fmt.Errorf("invalid --delay: %w", err)
 		}
 		overrides.ImageDelay = &parsedDelay
 	}
-	if preset.set {
-		overrides.Preset = &preset.value
+	if flags.Changed("preset") {
+		overrides.Preset = &preset
 	}
 	config, err := ResolveConfig(fileConfig, overrides)
 	if err != nil {
@@ -360,17 +389,20 @@ func ParseExitCode(value string) (int, error) {
 	return strconv.Atoi(value)
 }
 
-func runConfig(args []string, stdout io.Writer, dependencies Dependencies) error {
-	flags := flag.NewFlagSet("config", flag.ContinueOnError)
-	flags.SetOutput(io.Discard)
-	var output stringFlag
-	flags.Var(&output, "out", "persistent output directory")
-	if err := flags.Parse(args); err != nil {
-		return err
+func NewConfigCommand(dependencies Dependencies) *cobra.Command {
+	cmd := &cobra.Command{
+		Use:   "config",
+		Short: "Show or update the persistent download location",
+		Args:  cobra.NoArgs,
+		RunE: func(cmd *cobra.Command, args []string) error {
+			return runConfig(cmd.Flags(), cmd.OutOrStdout(), dependencies)
+		},
 	}
-	if flags.NArg() != 0 {
-		return fmt.Errorf("unexpected positional argument %q", flags.Arg(0))
-	}
+	cmd.Flags().String("out", "", "persistent output directory")
+	return cmd
+}
+
+func runConfig(flags *pflag.FlagSet, stdout io.Writer, dependencies Dependencies) error {
 	configPath := dependencies.ConfigPath
 	var err error
 	if configPath == "" {
@@ -383,8 +415,9 @@ func runConfig(args []string, stdout io.Writer, dependencies Dependencies) error
 	if err != nil {
 		return err
 	}
-	if output.set {
-		fileConfig.OutputRoot = output.value
+	if flags.Changed("out") {
+		output, _ := flags.GetString("out")
+		fileConfig.OutputRoot = output
 		if err := SaveFileConfig(configPath, fileConfig); err != nil {
 			return fmt.Errorf("save config: %w", err)
 		}

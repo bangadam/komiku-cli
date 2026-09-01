@@ -7,6 +7,7 @@ import (
 	"time"
 	"unicode"
 
+	"github.com/charmbracelet/lipgloss"
 	"github.com/charmbracelet/x/ansi"
 
 	"github.com/bangadam/komiku-cli/cli"
@@ -15,10 +16,8 @@ import (
 func (m model) View() string {
 	var lines []string
 	switch m.screen {
-	case homeScreen:
-		lines = m.homeView()
-	case outputScreen:
-		lines = m.outputView()
+	case settingsScreen:
+		lines = m.settingsView()
 	case searchScreen:
 		lines = m.searchView()
 	case chaptersScreen:
@@ -41,61 +40,139 @@ func (m model) View() string {
 		lines = m.standalonePackingView()
 	case standalonePackDoneScreen:
 		lines = m.standalonePackDoneView()
+	case downloadsScreen:
+		lines = m.downloadsView()
+	}
+	return m.renderLayout(lines)
+}
+
+// asciiBox keeps bordered frames readable when the terminal strips styling.
+var asciiBox = lipgloss.Border{
+	Top:         "-",
+	Bottom:      "-",
+	Left:        "|",
+	Right:       "|",
+	TopLeft:     "+",
+	TopRight:    "+",
+	BottomLeft:  "+",
+	BottomRight: "+",
+}
+
+func newViewStyles(plain bool, renderer *lipgloss.Renderer) viewStyles {
+	styles := viewStyles{frame: lipgloss.NewStyle().Border(asciiBox)}
+	if plain || renderer == nil {
+		return styles
+	}
+	styles.frame = renderer.NewStyle().Border(lipgloss.RoundedBorder())
+	styles.heading = renderer.NewStyle().Bold(true)
+	styles.focus = renderer.NewStyle().Bold(true).Reverse(true)
+	return styles
+}
+
+func (m model) renderLayout(lines []string) string {
+	sidebarWidth, contentWidth := m.layoutWidths()
+	compact := m.width < 48
+	if compact {
+		contentWidth = max(m.width-4, 1)
 	}
 	for index, line := range lines {
 		if m.plain {
 			line = asciiOnly(ansi.Strip(line))
 		}
-		lines[index] = ansi.Truncate(line, max(m.width, 1), "...")
+		lines[index] = ansi.Truncate(line, contentWidth, "...")
 	}
-	return strings.Join(lines, "\n")
-}
-
-func (m model) homeView() []string {
-	lines := []string{m.heading("What do you want to do?"), ""}
-	options := []struct{ title, description string }{
-		{"Download manga", "Search titles and download chapters."},
-		{"Pack downloaded manga", "Create CBZ files from chapters already on disk."},
+	if compact {
+		return m.styles.frame.Width(contentWidth+2).Padding(0, 1).Render(strings.Join(lines, "\n"))
 	}
-	for index, option := range options {
-		title := "  " + option.title
-		if index == m.homeCursor {
-			title = m.accent("> " + option.title)
+	sidebar := m.sidebarLines()
+	for index, line := range sidebar {
+		if m.plain {
+			line = asciiOnly(ansi.Strip(line))
 		}
-		lines = append(lines, title, "    "+option.description, "")
+		sidebar[index] = ansi.Truncate(line, sidebarWidth, "...")
 	}
-	if m.loading {
-		lines = append(lines, m.loadingLine("Finding downloaded manga"), "")
-	}
-	if m.err != nil {
-		lines = append(lines, "[ERROR] "+m.err.Error(), "")
-	}
-	return append(lines, "Up/Down move  Enter select  q quit")
+	height := max(len(lines), len(sidebar))
+	sidebarBlock := m.styles.frame.Width(sidebarWidth+2).Height(height).Padding(0, 1).Render(strings.Join(sidebar, "\n"))
+	contentBlock := m.styles.frame.Width(contentWidth+2).Height(height).Padding(0, 1).Render(strings.Join(lines, "\n"))
+	return lipgloss.JoinHorizontal(lipgloss.Top, sidebarBlock, " ", contentBlock)
 }
 
-func (m model) outputView() []string {
-	lines := []string{
-		m.heading("Where should downloads go?"),
-		"Choose a folder for manga and CBZ files.",
-		"",
-		"Download folder",
-		m.outputInput.View(),
-		"",
+func (m model) layoutWidths() (int, int) {
+	sidebar := min(16, max(m.width-12, 6))
+	return sidebar, max(m.width-sidebar-9, 1)
+}
+
+func (m model) sidebarLines() []string {
+	lines := []string{m.heading("komiku-cli"), ""}
+	for index, label := range navLabels {
+		if index == m.nav {
+			lines = append(lines, m.accent("> "+label))
+		} else {
+			lines = append(lines, "  "+label)
+		}
 	}
+	lines = append(lines, "", "Tab/ShiftTab nav")
+	if m.outputRoot != "" {
+		lines = append(lines, "", "Save to:", m.outputRoot)
+	}
+	return lines
+}
+
+func (m model) settingsView() []string {
+	lines := []string{m.heading("Settings"), ""}
+	folder := "  Download folder"
+	if m.settingsCursor == 0 {
+		folder = m.accent("> Download folder")
+	}
+	lines = append(lines, folder, "    "+m.outputInput.View())
 	remember := "[ ] Remember this location"
 	if m.outputPersist {
 		remember = "[x] Remember this location"
 	}
-	if m.outputCursor == 1 {
+	if m.settingsCursor == 1 {
 		remember = m.accent("> " + remember)
 	} else {
 		remember = "  " + remember
 	}
-	lines = append(lines, remember, "  Use this folder next time too.")
+	lines = append(lines, remember, "    Use this folder next time too.")
+	preset := "  CBZ preset: " + string(m.settingsPreset)
+	if m.settingsCursor == 2 {
+		preset = m.accent("> CBZ preset: " + string(m.settingsPreset))
+	}
+	lines = append(lines, preset, "    Left/Right changes quality.")
 	if m.err != nil {
 		lines = append(lines, "", "[ERROR] "+m.err.Error())
 	}
-	return append(lines, "", "Tab option  Space toggle  Enter continue  Esc quit")
+	if m.message != "" {
+		lines = append(lines, m.message)
+	}
+	return append(lines, "", "Up/Down option  Space toggle  Enter save", "Tab next menu  Shift+Tab previous  Esc back")
+}
+
+func (m model) downloadsView() []string {
+	lines := []string{m.heading("Downloads"), "From: " + m.outputRoot, ""}
+	if m.loading {
+		lines = append(lines, m.loadingLine(m.loadingLabel))
+	}
+	if len(m.downloads) == 0 && !m.loading {
+		lines = append(lines, "No downloaded manga found here.", "Use Search to download chapters first.")
+	}
+	for index, item := range m.downloads {
+		status := "ready to pack"
+		if item.recover {
+			status = "needs one-time recovery"
+		}
+		line := fmt.Sprintf("  %s  %s", filepath.Base(item.dir), status)
+		if index == m.downloadsCursor {
+			lines = append(lines, m.accent("> "+filepath.Base(item.dir)+"  "+status))
+		} else {
+			lines = append(lines, line)
+		}
+	}
+	if m.err != nil {
+		lines = append(lines, "", "[ERROR] "+m.err.Error())
+	}
+	return append(lines, "", "Up/Down move  Enter pack  Esc rescan  q quit")
 }
 
 func (m model) packSeriesView() []string {
@@ -120,12 +197,12 @@ func (m model) packSeriesView() []string {
 	}
 	lines = append(lines, other, "    Enter a folder outside the active storage location.")
 	if m.loading {
-		lines = append(lines, "", m.loadingLine("Checking download"))
+		lines = append(lines, "", m.loadingLine(m.loadingLabel))
 	}
 	if m.err != nil {
 		lines = append(lines, "", "[ERROR] "+m.err.Error())
 	}
-	return append(lines, "", "Up/Down move  Enter select  Esc back")
+	return append(lines, "", "Up/Down move  Enter select  Esc rescan")
 }
 
 func (m model) packPathView() []string {
@@ -156,6 +233,8 @@ func (m model) packRecoveryView() []string {
 		"",
 		m.accent("> Enter  Continue and pack"),
 		"  Esc    Go back",
+		"",
+		"Tab nav  q quit",
 	}
 }
 
@@ -175,7 +254,7 @@ func (m model) standalonePackDoneView() []string {
 	} else {
 		lines = append(lines, strings.Split(m.standalonePackOutput, "\n")...)
 	}
-	return append(lines, "", "Enter home  q quit")
+	return append(lines, "", "Enter back to list  q quit")
 }
 
 func (m model) searchView() []string {
@@ -193,7 +272,7 @@ func (m model) searchView() []string {
 		lines = append(lines, "", "[EMPTY] "+m.emptyLabel)
 	case len(m.searchResults) > 0:
 		lines = append(lines, "", fmt.Sprintf("Results (%d)", len(m.searchResults)))
-		limit := max(m.height-9, 2)
+		limit := max(m.height-11, 2)
 		start, end := visibleWindow(m.searchCursor, len(m.searchResults), limit)
 		for index := start; index < end; index++ {
 			prefix := "  "
@@ -206,9 +285,9 @@ func (m model) searchView() []string {
 			}
 			lines = append(lines, line)
 		}
-		lines = append(lines, "", "Up/Down move  Enter open  Esc edit  q quit")
+		lines = append(lines, "", "Up/Down move  Enter open  Esc edit  Tab nav  q quit")
 	default:
-		lines = append(lines, "", "Enter searches titles. An HTTP(S) URL opens chapters directly.", "Ctrl+C quits.")
+		lines = append(lines, "", "Enter searches titles. An HTTP(S) URL opens chapters directly.", "Tab switches the side menu. Ctrl+C quits.")
 	}
 	return lines
 }
@@ -259,13 +338,13 @@ func (m model) chaptersView() []string {
 			toggleControl = "Space toggle chapter/volume"
 		}
 	}
-	tail = append(tail, toggleControl+"  a visible all  / filter  "+volumeControl+"  r range  Enter download  q quit")
+	tail = append(tail, toggleControl+"  a  / filter  "+volumeControl+"  r range  Enter download  q quit")
 
 	visible := m.visibleChapterIndices()
 	if len(visible) == 0 {
 		lines = append(lines, "[EMPTY] No chapters match the filter. Press / to edit or Esc while filtering to clear.")
 	} else {
-		limit := max(m.height-len(lines)-len(tail), 1)
+		limit := max(m.height-len(lines)-len(tail)-2, 1)
 		if m.groupView && m.groupLoaded {
 			rows := m.groupedRows(visible)
 			focus := m.groupFocus
@@ -407,7 +486,7 @@ func (m model) downloadingView() []string {
 		lines = append(lines, "", "Recent")
 		lines = append(lines, m.tail...)
 	}
-	lines = append(lines, "", "Space pause/resume  q stop safely")
+	lines = append(lines, "", "Space pause/resume  Tab nav  q stop safely")
 	return lines
 }
 
@@ -451,7 +530,7 @@ func (m model) doneView() []string {
 	if m.message != "" {
 		lines = append(lines, m.message)
 	}
-	lines = append(lines, "", "p pack  q quit")
+	lines = append(lines, "", "p pack  Tab nav  q quit")
 	return lines
 }
 
@@ -515,17 +594,11 @@ func (m model) loadingLine(label string) string {
 }
 
 func (m model) heading(value string) string {
-	if m.plain || m.renderer == nil {
-		return value
-	}
-	return m.renderer.NewStyle().Bold(true).Render(value)
+	return m.styles.heading.Render(value)
 }
 
 func (m model) accent(value string) string {
-	if m.plain || m.renderer == nil {
-		return value
-	}
-	return m.renderer.NewStyle().Reverse(true).Bold(true).Render(value)
+	return m.styles.focus.Render(value)
 }
 
 func visibleWindow(cursor, total, limit int) (int, int) {

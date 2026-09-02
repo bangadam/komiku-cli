@@ -81,7 +81,7 @@ func prepareWikipediaRecovery(ctx context.Context, seriesDir, titleOverride, vol
 	}
 
 	client := komiku.NewClient(redirectDisabledClient(httpClient), 0)
-	mappings, err := client.FetchWikipediaDisplayVolumes(ctx, title)
+	mappings, err := client.FetchWikipediaDisplayVolumesStrict(ctx, title)
 	if err != nil {
 		return wikipediaRecovery{}, err
 	}

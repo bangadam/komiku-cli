@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"html"
+	"net/http"
 	"net/url"
 	"regexp"
 	"sort"
@@ -31,6 +32,11 @@ var (
 	volumeJSONPattern       = regexp.MustCompile(`(?is)VolumeNumber.{0,400}?["']wt["']\s*:\s*["']([0-9]+)["'].{0,1000}?.{0,600}?\bstart=([0-9]+)`)
 	volumeHeadingPattern    = regexp.MustCompile(`(?is)\bVolume\s+([0-9]+)\b.{0,1000}?.{0,600}?\bstart\s*=\s*["']?([0-9]+)`)
 	wikipediaChapterPattern = regexp.MustCompile(`(?i)\bDays\s+([0-9]+)\s*[:.]`)
+	orderedListPattern      = regexp.MustCompile(`(?is)<ol([^>]*)>(.*?)</ol>`)
+	olStartPattern          = regexp.MustCompile(`(?i)\bstart\s*=\s*["']?([0-9]+)`)
+	liTagPattern            = regexp.MustCompile(`(?i)<li[\s>/]`)
+	listItemPattern         = regexp.MustCompile(`(?is)<li(?:\s[^>]*)?>(.*?)</li>`)
+	numberedItemPattern     = regexp.MustCompile(`^([0-9]+)[.)]`)
 )
 
 func volumeSection(data []byte) []byte {
@@ -140,11 +146,45 @@ func MaxDiscoveredChapter(chapters []Chapter) int {
 	return maxChapter
 }
 
+// stripNestedSections removes nested <section> blocks (e.g. "Chapters not yet
+// in tankōbon format") from a Volumes section so their items cannot extend
+// the last volume's chapter range.
+func stripNestedSections(section []byte) []byte {
+	tags := tagPattern.FindAllIndex(section, -1)
+	if len(tags) == 0 {
+		return section
+	}
+	stripped := make([]byte, 0, len(section))
+	copied := 0
+	depth := 0
+	for _, bounds := range tags {
+		tag := section[bounds[0]:bounds[1]]
+		lower := strings.ToLower(strings.TrimSpace(string(tag)))
+		switch {
+		case strings.HasPrefix(lower, "<section"):
+			if depth == 0 {
+				stripped = append(stripped, section[copied:bounds[0]]...)
+			}
+			depth++
+		case strings.HasPrefix(lower, "</section"):
+			if depth > 0 {
+				depth--
+				if depth == 0 {
+					copied = bounds[1]
+				}
+			}
+		}
+	}
+	stripped = append(stripped, section[copied:]...)
+	return stripped
+}
+
 func ParseWikipediaDisplayVolumes(data []byte) ([]Volume, error) {
 	section, err := wikipediaVolumesSection(data)
 	if err != nil {
 		return nil, err
 	}
+	section = stripNestedSections(section)
 	type marker struct {
 		volume int
 		start  int
@@ -167,7 +207,7 @@ func ParseWikipediaDisplayVolumes(data []byte) ([]Volume, error) {
 		if parseErr != nil || volume <= 0 {
 			continue
 		}
-		markers = append(markers, marker{volume: volume, start: bounds[1], end: len(section)})
+		markers = append(markers, marker{volume: volume, start: bounds[0], end: len(section)})
 	}
 	if len(markers) == 0 {
 		return nil, errNoWikipediaVolumeRows
@@ -175,38 +215,35 @@ func ParseWikipediaDisplayVolumes(data []byte) ([]Volume, error) {
 	for index := 0; index+1 < len(markers); index++ {
 		markers[index].end = markers[index+1].start
 	}
+	// Marker spans start at the volume's own <th> and end at the next volume's
+	// <th>, which covers chapter lists rendered in a separate following row.
+	// Extractors read the raw slice, so the leading <th> tag itself is harmless.
 
 	volumes := make([]Volume, 0, len(markers))
 	seenVolumes := make(map[int]struct{}, len(markers))
+	usableRows := 0
 	for _, marker := range markers {
 		if _, exists := seenVolumes[marker.volume]; exists {
 			return nil, fmt.Errorf("Wikipedia Volumes section repeats volume %d", marker.volume)
 		}
 		seenVolumes[marker.volume] = struct{}{}
-		text := html.UnescapeString(string(tagPattern.ReplaceAll(section[marker.start:marker.end], []byte(" "))))
-		matches := wikipediaChapterPattern.FindAllStringSubmatch(text, -1)
-		chapters := make([]int, 0, len(matches))
-		seenChapters := make(map[int]struct{}, len(matches))
-		for _, match := range matches {
-			chapter, parseErr := strconv.Atoi(match[1])
-			if parseErr != nil || chapter <= 0 {
-				continue
-			}
-			if _, exists := seenChapters[chapter]; !exists {
-				seenChapters[chapter] = struct{}{}
-				chapters = append(chapters, chapter)
-			}
+		chapters, extractErr := wikipediaRowChapters(section[marker.start:marker.end])
+		if extractErr != nil {
+			return nil, fmt.Errorf("Wikipedia volume %d: %w", marker.volume, extractErr)
 		}
 		if len(chapters) == 0 {
-			return nil, fmt.Errorf("Wikipedia volume %d has no chapter list", marker.volume)
+			continue
 		}
-		sort.Ints(chapters)
+		usableRows++
 		for index := 1; index < len(chapters); index++ {
 			if chapters[index] != chapters[index-1]+1 {
 				return nil, fmt.Errorf("Wikipedia volume %d chapter list is not contiguous at %d-%d", marker.volume, chapters[index-1], chapters[index])
 			}
 		}
 		volumes = append(volumes, Volume{Volume: marker.volume, Start: chapters[0], End: chapters[len(chapters)-1]})
+	}
+	if usableRows == 0 {
+		return nil, errNoWikipediaVolumeRows
 	}
 	for index := 1; index < len(volumes); index++ {
 		if volumes[index].Volume <= volumes[index-1].Volume {
@@ -220,6 +257,102 @@ func ParseWikipediaDisplayVolumes(data []byte) ([]Volume, error) {
 		return nil, fmt.Errorf("invalid Wikipedia volume rows: %w", err)
 	}
 	return volumes, nil
+}
+
+// wikipediaRowChapters extracts the chapter numbers covered by one Wikipedia
+// volume row. Wikipedia renders per-volume chapter lists in several shapes:
+// explicit labels ("Days 1:"), numbered lists whose numbering is carried by
+// <ol start="N"> attributes, and plain list items with a "N." number prefix.
+// The first shape that yields any chapter is used.
+func wikipediaRowChapters(row []byte) ([]int, error) {
+	if chapters, err := wikipediaRowChapterLabels(row); err == nil && len(chapters) > 0 {
+		return chapters, nil
+	}
+	if chapters := wikipediaRowOrderedLists(row); len(chapters) > 0 {
+		return chapters, nil
+	}
+	if chapters := wikipediaRowNumberedItems(row); len(chapters) > 0 {
+		return chapters, nil
+	}
+	return nil, nil
+}
+
+// wikipediaRowChapterLabels collects chapters from labeled entries such as
+// "Days 1:" inside the row, in document order.
+func wikipediaRowChapterLabels(row []byte) ([]int, error) {
+	text := html.UnescapeString(string(tagPattern.ReplaceAll(row, []byte(" "))))
+	chapters := make([]int, 0)
+	seen := make(map[int]struct{})
+	for _, match := range wikipediaChapterPattern.FindAllStringSubmatch(text, -1) {
+		chapter, err := strconv.Atoi(match[1])
+		if err != nil || chapter <= 0 {
+			continue
+		}
+		if _, exists := seen[chapter]; !exists {
+			seen[chapter] = struct{}{}
+			chapters = append(chapters, chapter)
+		}
+	}
+	sort.Ints(chapters)
+	return chapters, nil
+}
+
+// wikipediaRowOrderedLists collects chapters from <ol> groups where the first
+// chapter number is carried by the start attribute and each <li> is one
+// chapter, and from plain <ul> groups whose items carry a "N." number prefix.
+func wikipediaRowOrderedLists(row []byte) []int {
+	chapters := make([]int, 0)
+	seen := make(map[int]struct{})
+	next := 0
+	for _, match := range orderedListPattern.FindAllSubmatch(row, -1) {
+		start := 1
+		if startAttr := olStartPattern.FindSubmatch(match[1]); startAttr != nil {
+			parsed, err := strconv.Atoi(string(startAttr[1]))
+			if err != nil || parsed <= 0 {
+				continue
+			}
+			start = parsed
+		} else if next > 0 {
+			start = next
+		}
+		count := len(liTagPattern.FindAllIndex(match[2], -1))
+		if count == 0 {
+			continue
+		}
+		for chapter := start; chapter < start+count; chapter++ {
+			if _, exists := seen[chapter]; !exists {
+				seen[chapter] = struct{}{}
+				chapters = append(chapters, chapter)
+			}
+		}
+		next = start + count
+	}
+	sort.Ints(chapters)
+	return chapters
+}
+
+// wikipediaRowNumberedItems collects chapters from list items whose text
+// begins with an explicit number, such as `355. "One to Infinity"`.
+func wikipediaRowNumberedItems(row []byte) []int {
+	chapters := make([]int, 0)
+	seen := make(map[int]struct{})
+	for _, match := range listItemPattern.FindAllSubmatch(row, -1) {
+		text := strings.TrimSpace(html.UnescapeString(string(tagPattern.ReplaceAll(match[1], []byte(" ")))))
+		label := numberedItemPattern.FindStringSubmatch(text)
+		if label == nil {
+			continue
+		}
+		chapter, err := strconv.Atoi(label[1])
+		if err != nil || chapter <= 0 {
+			continue
+		}
+		if _, exists := seen[chapter]; !exists {
+			seen[chapter] = struct{}{}
+			chapters = append(chapters, chapter)
+		}
+	}
+	sort.Ints(chapters)
+	return chapters
 }
 
 func wikipediaVolumesSection(data []byte) ([]byte, error) {
@@ -241,7 +374,7 @@ func wikipediaVolumesSection(data []byte) ([]byte, error) {
 				depth++
 				continue
 			}
-			if strings.EqualFold(strings.TrimSpace(parseAttrs(tag)["aria-labelledby"]), "Volumes") {
+			if isVolumesSectionLabel(parseAttrs(tag)["aria-labelledby"]) {
 				start, depth = bounds[1], 1
 			}
 		}
@@ -252,13 +385,61 @@ func wikipediaVolumesSection(data []byte) ([]byte, error) {
 	return nil, errNoWikipediaVolumeRows
 }
 
+// isVolumesSectionLabel accepts the canonical "Volumes" heading id plus series
+// namespaced variants such as "Blue_Lock_volumes". It rejects unrelated
+// sections like "Chapters_not_yet_in_tankōbon_format" or "Volumes_28–48" only
+// when they cannot be volume groupings... the suffix form must end with the
+// word volumes itself.
+func isVolumesSectionLabel(label string) bool {
+	normalized := strings.ToLower(strings.ReplaceAll(strings.TrimSpace(label), "_", " "))
+	return normalized == "volumes" || strings.HasSuffix(normalized, " volumes")
+}
+
 func (c *Client) FetchWikipediaDisplayVolumes(ctx context.Context, seriesName string) ([]Volume, error) {
 	name := strings.Join(strings.Fields(seriesName), "_")
 	if name == "" {
 		return nil, errors.New("series name is empty")
 	}
-	wikiURL := "https://en.wikipedia.org/wiki/" + url.PathEscape("List_of_"+name+"_chapters")
-	data, err := c.fetchHTML(ctx, wikiURL)
+	tried := make(map[string]bool)
+	// Direct lookups cover titles whose Komiku slug matches the English
+	// Wikipedia article name ("sakamoto-days"). Noisy slugs (Indonesian
+	// suffixes, subtitles, hyphenation differences) 404 here and fall through
+	// to the search resolution below.
+	for _, suffix := range []string{"chapters", "volumes"} {
+		volumes, found, err := c.fetchWikipediaDisplayPage(ctx, wikipediaArticleURL("List_of_"+name+"_"+suffix), tried)
+		if err != nil {
+			return nil, err
+		}
+		if found {
+			return volumes, nil
+		}
+	}
+	title, found, err := c.searchWikipediaListTitle(ctx, seriesName, tried)
+	if err != nil {
+		return nil, err
+	}
+	if !found {
+		return nil, nil
+	}
+	volumes, found, err := c.fetchWikipediaDisplayPage(ctx, wikipediaArticleURL(title), tried)
+	if err != nil {
+		return nil, err
+	}
+	if !found {
+		return nil, nil
+	}
+	return volumes, nil
+}
+
+// FetchWikipediaDisplayVolumesStrict performs exactly one Wikipedia page
+// fetch with no redirects and no title resolution; the pack-recovery command
+// mandates this contract.
+func (c *Client) FetchWikipediaDisplayVolumesStrict(ctx context.Context, seriesName string) ([]Volume, error) {
+	name := strings.Join(strings.Fields(seriesName), "_")
+	if name == "" {
+		return nil, errors.New("series name is empty")
+	}
+	data, err := c.fetchHTML(ctx, wikipediaArticleURL("List_of_"+name+"_chapters"))
 	if err != nil {
 		return nil, fmt.Errorf("fetch Wikipedia volume groups: %w", err)
 	}
@@ -270,6 +451,135 @@ func (c *Client) FetchWikipediaDisplayVolumes(ctx context.Context, seriesName st
 		return nil, fmt.Errorf("parse Wikipedia volume groups: %w", err)
 	}
 	return volumes, nil
+}
+
+func (c *Client) fetchWikipediaDisplayPage(ctx context.Context, target string, tried map[string]bool) ([]Volume, bool, error) {
+	if tried[target] {
+		return nil, false, nil
+	}
+	data, status, statusText, err := c.fetchPage(ctx, target)
+	if err != nil {
+		return nil, false, fmt.Errorf("fetch Wikipedia volume groups: %w", err)
+	}
+	if status != http.StatusOK {
+		return nil, false, nil
+	}
+	_ = statusText
+	volumes, err := ParseWikipediaDisplayVolumes(data)
+	if err != nil {
+		if errors.Is(err, errNoWikipediaVolumeRows) {
+			tried[target] = true
+			return nil, false, nil
+		}
+		return nil, false, fmt.Errorf("parse Wikipedia volume groups: %w", err)
+	}
+	return volumes, true, nil
+}
+
+func wikipediaArticleURL(title string) string {
+	return "https://en.wikipedia.org/wiki/" + url.PathEscape(strings.ReplaceAll(title, " ", "_"))
+}
+
+// searchWikipediaListTitle resolves the English Wikipedia "List of ..."
+// article for a series whose name (from the Komiku slug) does not match the
+// article title. It phrase-searches progressively shortened prefixes of the
+// name and picks a chapters/volumes list page, preferring "chapters" pages
+// (they embed per-volume chapter lists) over "volumes" pages.
+func (c *Client) searchWikipediaListTitle(ctx context.Context, seriesName string, tried map[string]bool) (string, bool, error) {
+	words := strings.Fields(strings.NewReplacer("-", " ", "_", " ").Replace(seriesName))
+	const maxSearches = 6
+	for end := len(words); end >= 1; end-- {
+		if len(words)-end >= maxSearches {
+			break
+		}
+		title, found, err := c.searchWikipediaListTitleOnce(ctx, "List of "+strings.Join(words[:end], " "), tried)
+		if err != nil {
+			return "", false, err
+		}
+		if found {
+			return title, true, nil
+		}
+	}
+	return "", false, nil
+}
+
+func (c *Client) searchWikipediaListTitleOnce(ctx context.Context, phrase string, tried map[string]bool) (string, bool, error) {
+	values := url.Values{}
+	values.Set("action", "query")
+	values.Set("list", "search")
+	values.Set("format", "json")
+	values.Set("srlimit", "20")
+	values.Set("srsearch", `"`+phrase+`"`)
+	data, status, _, err := c.fetchPage(ctx, "https://en.wikipedia.org/w/api.php?"+values.Encode())
+	if err != nil {
+		return "", false, fmt.Errorf("search Wikipedia for %q: %w", phrase, err)
+	}
+	if status != http.StatusOK {
+		return "", false, fmt.Errorf("search Wikipedia for %q: status %d", phrase, status)
+	}
+	var response struct {
+		Query struct {
+			Search []struct {
+				Title string `json:"title"`
+			} `json:"search"`
+		} `json:"query"`
+	}
+	if err := json.Unmarshal(data, &response); err != nil {
+		return "", false, fmt.Errorf("search Wikipedia for %q: %w", phrase, err)
+	}
+	titles := make([]string, 0, len(response.Query.Search))
+	for _, item := range response.Query.Search {
+		titles = append(titles, item.Title)
+	}
+	title := selectWikipediaListTitle(titles, phrase, tried)
+	if title == "" {
+		return "", false, nil
+	}
+	return title, true, nil
+}
+
+// selectWikipediaListTitle picks the best chapters/volumes article from search
+// results: "chapters" pages win over "volumes", candidates must share a word
+// with the searched series, and pages fetched earlier are skipped.
+func selectWikipediaListTitle(titles []string, phrase string, tried map[string]bool) string {
+	shared := searchPhraseWords(phrase)
+	for _, kind := range []string{"chapters", "volumes"} {
+		for _, item := range titles {
+			title := strings.TrimSpace(item)
+			match := wikipediaListTitlePattern.FindStringSubmatch(title)
+			if match == nil || !strings.EqualFold(match[2], kind) || !sharesSearchWord(title, shared) {
+				continue
+			}
+			if tried[wikipediaArticleURL(title)] {
+				continue
+			}
+			return title
+		}
+	}
+	return ""
+}
+
+var wikipediaListTitlePattern = regexp.MustCompile(`(?i)^list of (.+) (chapters|volumes)$`)
+
+func searchPhraseWords(phrase string) map[string]bool {
+	words := map[string]bool{}
+	for _, word := range strings.Fields(strings.ToLower(strings.NewReplacer("-", " ", "_", " ").Replace(phrase))) {
+		if word == "list" || word == "of" {
+			continue
+		}
+		words[word] = true
+	}
+	return words
+}
+
+func sharesSearchWord(title string, words map[string]bool) bool {
+	replacer := strings.NewReplacer("-", " ", "_", " ", ":", " ", "'", "")
+	for _, word := range strings.Fields(strings.ToLower(replacer.Replace(title))) {
+		if words[word] {
+			return true
+		}
+	}
+	return false
 }
 
 func (c *Client) FetchVolumeMapping(ctx context.Context, seriesName string, maxChapter int) (VolumeCache, error) {

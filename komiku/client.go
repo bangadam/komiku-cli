@@ -146,28 +146,39 @@ func NewClient(httpClient *http.Client, imageDelay time.Duration) *Client {
 }
 
 func (c *Client) fetchHTML(ctx context.Context, target string) ([]byte, error) {
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, target, nil)
+	data, status, statusText, err := c.fetchPage(ctx, target)
 	if err != nil {
 		return nil, err
+	}
+	if status < 200 || status > 299 {
+		return nil, fmt.Errorf("GET %s: %s", target, statusText)
+	}
+	return data, nil
+}
+
+// fetchPage performs a GET and returns the body with the HTTP status, so
+// callers can distinguish missing pages (404) from other failures.
+func (c *Client) fetchPage(ctx context.Context, target string) ([]byte, int, string, error) {
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, target, nil)
+	if err != nil {
+		return nil, 0, "", err
 	}
 	req.Header.Set("User-Agent", c.userAgent())
 	resp, err := c.httpClient().Do(req)
 	if err != nil {
-		return nil, err
+		return nil, 0, "", err
 	}
 	defer resp.Body.Close()
-	if resp.StatusCode < 200 || resp.StatusCode > 299 {
-		return nil, fmt.Errorf("GET %s: %s", target, resp.Status)
-	}
+	statusText := resp.Status
 	const maxHTML = 16 << 20
 	data, err := io.ReadAll(io.LimitReader(resp.Body, maxHTML+1))
 	if err != nil {
-		return nil, err
+		return nil, resp.StatusCode, statusText, err
 	}
 	if len(data) > maxHTML {
-		return nil, fmt.Errorf("GET %s: HTML exceeds %d bytes", target, maxHTML)
+		return nil, resp.StatusCode, statusText, fmt.Errorf("GET %s: HTML exceeds %d bytes", target, maxHTML)
 	}
-	return data, nil
+	return data, resp.StatusCode, statusText, nil
 }
 
 func (c *Client) ChapterImages(ctx context.Context, chapterURL string) ([]string, error) {

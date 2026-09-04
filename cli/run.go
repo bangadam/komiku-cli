@@ -2,6 +2,7 @@ package cli
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
@@ -9,6 +10,7 @@ import (
 	"net/url"
 	"os"
 	"path/filepath"
+	"runtime/debug"
 	"sort"
 	"strconv"
 	"strings"
@@ -22,7 +24,18 @@ import (
 	"github.com/bangadam/komiku-cli/store"
 )
 
-const dlCommandUsage = "usage: komiku-cli dl <series-url> [--ch RANGE | --vol RANGE] --no-tui [--flat] [--pack --preset medium|small|tiny|raw]"
+const dlCommandUsage = "usage: komiku-cli dl <series-url> [--ch RANGE|all|missing|latest:N | --vol RANGE] --no-tui [--flat] [--pack --preset medium|small|tiny|raw]"
+
+// Version is reported by --version. Binary builds fall back to "devel".
+const Version = "0.2.0"
+
+// VersionString prefers the module version recorded by the Go toolchain.
+func VersionString() string {
+	if info, ok := debug.ReadBuildInfo(); ok && info.Main.Version != "" && info.Main.Version != "(devel)" {
+		return info.Main.Version
+	}
+	return Version
+}
 
 // exitCodeError carries an already-reported exit code past cobra without a
 // second "error:" line.
@@ -33,9 +46,11 @@ type exitCodeError struct {
 func (e exitCodeError) Error() string { return fmt.Sprintf("exit %d", e.code) }
 
 type Dependencies struct {
-	HTTP       *http.Client
-	Now        func() time.Time
-	ConfigPath string
+	HTTP             *http.Client
+	Now              func() time.Time
+	ConfigPath       string
+	BaseURL          string
+	subscriptionsPath string
 }
 
 func Main(ctx context.Context, args []string, stdout, stderr io.Writer, dependencies Dependencies) int {
@@ -59,12 +74,15 @@ func printHeadlessUsage(stderr io.Writer) {
 	fmt.Fprintln(stderr, dlCommandUsage)
 	fmt.Fprintln(stderr, packCommandUsage)
 	fmt.Fprintln(stderr, "usage: komiku-cli config [--out DIR]")
+	fmt.Fprintln(stderr, "usage: komiku-cli search <query> [--json]")
+	fmt.Fprintln(stderr, "usage: komiku-cli info <series-url> [--out DIR] [--json]")
 }
 
 func NewRootCommand(stdout, stderr io.Writer, dependencies Dependencies) *cobra.Command {
 	root := &cobra.Command{
 		Use:           "komiku-cli",
 		Short:         "Keyboard-first Komiku manga downloader and offline CBZ packer",
+		Version:       VersionString(),
 		SilenceUsage:  true,
 		SilenceErrors: true,
 		Args:          cobra.ArbitraryArgs,
@@ -72,19 +90,28 @@ func NewRootCommand(stdout, stderr io.Writer, dependencies Dependencies) *cobra.
 			DisableDefaultCmd: true,
 		},
 		RunE: func(cmd *cobra.Command, args []string) error {
-			if len(args) > 0 {
-				fmt.Fprintf(cmd.ErrOrStderr(), "unknown command %q; expected dl, pack, or config\n", args[0])
-				return exitCodeError{2}
-			}
-			printHeadlessUsage(cmd.ErrOrStderr())
+		if len(args) > 0 {
+			fmt.Fprintf(cmd.ErrOrStderr(), "unknown command %q; expected tui, dl, pack, verify, serve, subscribe, unsubscribe, subs, update, config, search, or info\n", args[0])
 			return exitCodeError{2}
+		}
+		printHeadlessUsage(cmd.ErrOrStderr())
+		return exitCodeError{2}
 		},
 	}
 	root.SetOut(stdout)
 	root.SetErr(stderr)
 	root.AddCommand(NewDownloadCommand(dependencies))
 	root.AddCommand(NewPackCommand(dependencies))
+	root.AddCommand(NewVerifyCommand())
+	root.AddCommand(NewServeCommand(dependencies))
+	root.AddCommand(NewSubscribeCommand(dependencies))
+	root.AddCommand(NewUnsubscribeCommand(dependencies))
+	root.AddCommand(NewSubsCommand(dependencies))
+	root.AddCommand(NewUpdateCommand(dependencies))
+	root.AddCommand(NewLibraryCommand(dependencies))
 	root.AddCommand(NewConfigCommand(dependencies))
+	root.AddCommand(NewSearchCommand(dependencies))
+	root.AddCommand(NewInfoCommand(dependencies))
 	return root
 }
 
@@ -111,11 +138,12 @@ func NewDownloadCommand(dependencies Dependencies) *cobra.Command {
 			return runDownload(cmd.Context(), args[0], cmd.Flags(), cmd.OutOrStdout(), dependencies)
 		},
 	}
-	cmd.Flags().String("ch", "", "chapter list/range")
+	cmd.Flags().String("ch", "", "chapter list/range, all, missing, or latest:N")
 	cmd.Flags().String("vol", "", "volume list/range")
 	cmd.Flags().Bool("no-tui", false, "run headless")
 	cmd.Flags().Bool("flat", false, "store chapters without volume folders")
 	cmd.Flags().Bool("pack", false, "pack selected volumes after download")
+	cmd.Flags().Bool("json", false, "print the download report as JSON")
 	cmd.Flags().String("out", "", "output directory")
 	cmd.Flags().String("delay", "", "image request delay")
 	cmd.Flags().String("preset", "", "pack preset")
@@ -201,9 +229,13 @@ func runDownload(ctx context.Context, seriesURL string, flags *pflag.FlagSet, st
 	var jobs []Job
 	var selectedVolumes []komiku.Volume
 	if chapterExpression != "" {
-		selected, err := SelectChapters(chapters, chapterExpression)
+		selected, err := selectChaptersForDownload(chapters, chapterExpression, seriesStore)
 		if err != nil {
 			return err
+		}
+		if len(selected) == 0 {
+			fmt.Fprintf(stdout, "no missing chapters: %s is already complete (%d done)\n", series, seriesStoreCountDone(seriesStore))
+			return nil
 		}
 		jobs = make([]Job, 0, len(selected))
 		for _, chapter := range selected {
@@ -244,14 +276,24 @@ func runDownload(ctx context.Context, seriesURL string, flags *pflag.FlagSet, st
 	if len(results) != len(jobs) {
 		return fmt.Errorf("download stopped after %d/%d chapter results", len(results), len(jobs))
 	}
+	asJSON, _ := flags.GetBool("json")
 	failed := false
 	for _, result := range results {
-		fmt.Fprintf(stdout, "chapter %s: %s pages=%d/%d\n", result.Chapter.Display, result.Label(), result.Success, result.Total)
 		if result.Status != Done {
 			failed = true
+			break
 		}
 	}
-	fmt.Fprintf(stdout, "summary DONE=%d PART=%d FAIL=%d NOIMG=%d log=%s\n", summary.Counts[Done], summary.Counts[Part], summary.Counts[Fail], summary.Counts[NoImg], summary.AuditPath)
+	if asJSON {
+		if err := writeDownloadReportJSON(stdout, series, seriesURL, summary, selectedVolumes); err != nil {
+			return err
+		}
+	} else {
+		for _, result := range results {
+			fmt.Fprintf(stdout, "chapter %s: %s pages=%d/%d\n", result.Chapter.Display, result.Label(), result.Success, result.Total)
+		}
+		fmt.Fprintf(stdout, "summary DONE=%d PART=%d FAIL=%d NOIMG=%d log=%s\n", summary.Counts[Done], summary.Counts[Part], summary.Counts[Fail], summary.Counts[NoImg], summary.AuditPath)
+	}
 	if failed {
 		return errors.New("batch completed with partial or failed chapters")
 	}
@@ -288,6 +330,98 @@ func runDownload(ctx context.Context, seriesURL string, flags *pflag.FlagSet, st
 		}
 	}
 	return nil
+}
+
+// selectChaptersForDownload supports the special selectors all, missing, and
+// latest:N on top of the explicit chapter expression syntax.
+func selectChaptersForDownload(chapters []komiku.Chapter, expression string, seriesStore *store.SeriesStore) ([]komiku.Chapter, error) {
+	switch {
+	case strings.TrimSpace(expression) == "all":
+		return append([]komiku.Chapter(nil), chapters...), nil
+	case strings.TrimSpace(expression) == "missing":
+		missing := make([]komiku.Chapter, 0, len(chapters))
+		for _, chapter := range chapters {
+			if !seriesStore.IsDone(chapter.Number) {
+				missing = append(missing, chapter)
+			}
+		}
+		return missing, nil
+	case strings.HasPrefix(strings.TrimSpace(expression), "latest:"):
+		countText := strings.TrimSpace(strings.TrimPrefix(strings.TrimSpace(expression), "latest:"))
+		count, err := strconv.Atoi(countText)
+		if err != nil || count < 1 {
+			return nil, fmt.Errorf("invalid latest selector %q; expected latest:N with N >= 1", expression)
+		}
+		if count > len(chapters) {
+			count = len(chapters)
+		}
+		return append([]komiku.Chapter(nil), chapters[len(chapters)-count:]...), nil
+	default:
+		return SelectChapters(chapters, expression)
+	}
+}
+
+func seriesStoreCountDone(seriesStore *store.SeriesStore) int {
+	done, err := store.ReadDone(seriesStore.Root, seriesStore.Series)
+	if err != nil {
+		return 0
+	}
+	return len(done)
+}
+
+type DownloadReport struct {
+	Series         string         `json:"series"`
+	SeriesURL      string         `json:"series_url,omitempty"`
+	Requested      int            `json:"requested"`
+	Started        int            `json:"started"`
+	PagesOK        int            `json:"pages_ok"`
+	PagesFailed    int            `json:"pages_failed"`
+	Counts         map[Status]int `json:"counts"`
+	AuditPath      string         `json:"audit_log"`
+	Results        []ResultReport `json:"results"`
+	MappedVolumes  []int          `json:"mapped_volumes,omitempty"`
+	FailedChapters []string       `json:"failed_chapters,omitempty"`
+}
+
+type ResultReport struct {
+	Chapter    string   `json:"chapter"`
+	Status     Status   `json:"status"`
+	PagesOK    int      `json:"pages_ok"`
+	PagesTotal int      `json:"pages_total"`
+	Errors     []string `json:"errors,omitempty"`
+}
+
+func writeDownloadReportJSON(stdout io.Writer, series, seriesURL string, summary Summary, volumes []komiku.Volume) error {
+	report := DownloadReport{
+		Series:        series,
+		SeriesURL:     seriesURL,
+		Requested:     summary.Requested,
+		Started:       summary.Started,
+		PagesOK:       summary.PagesOK,
+		PagesFailed:   summary.PagesFailed,
+		Counts:        summary.Counts,
+		AuditPath:     summary.AuditPath,
+		Results:       make([]ResultReport, 0, len(summary.Results)),
+	}
+	for _, volume := range volumes {
+		report.MappedVolumes = append(report.MappedVolumes, volume.Volume)
+	}
+	for _, result := range summary.Results {
+		report.Results = append(report.Results, ResultReport{
+			Chapter:    result.Chapter.Display,
+			Status:     result.Status,
+			PagesOK:    result.Success,
+			PagesTotal: result.Total,
+			Errors:     result.Errors,
+		})
+		if result.Status != Done {
+			report.FailedChapters = append(report.FailedChapters, result.Chapter.Display)
+		}
+	}
+	if report.Counts == nil {
+		report.Counts = map[Status]int{}
+	}
+	return json.NewEncoder(stdout).Encode(report)
 }
 
 func SelectedVolumeMappings(volumes []komiku.Volume, expression string) ([]komiku.Volume, error) {

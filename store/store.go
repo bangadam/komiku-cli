@@ -98,6 +98,30 @@ func (s *SeriesStore) loadState() error {
 	return nil
 }
 
+// ReadDone loads the completed chapter numbers of a series without creating
+// any directories. Missing state files yield an empty result.
+func ReadDone(root, series string) ([]float64, error) {
+	if root == "" {
+		return nil, errors.New("output root is empty")
+	}
+	if series == "" || series == "." || series == ".." || strings.ContainsAny(series, "/\\\x00") {
+		return nil, fmt.Errorf("invalid series directory %q", series)
+	}
+	data, err := os.ReadFile(filepath.Join(root, series, ".state.json"))
+	if errors.Is(err, os.ErrNotExist) {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, fmt.Errorf("read state: %w", err)
+	}
+	var state State
+	if err := json.Unmarshal(data, &state); err != nil {
+		return nil, fmt.Errorf("decode state: %w", err)
+	}
+	sort.Float64s(state.Done)
+	return state.Done, nil
+}
+
 func (s *SeriesStore) ChapterDir(display, rawDisambiguator string, volume int, flat bool) (string, error) {
 	chapter, err := chapterName(display, rawDisambiguator)
 	if err != nil {

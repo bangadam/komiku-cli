@@ -45,7 +45,7 @@ func newRootCommand(input io.Reader, stdout, stderr io.Writer) *cobra.Command {
 	root.Args = cobra.ArbitraryArgs
 	root.RunE = func(cmd *cobra.Command, args []string) error {
 		if len(args) > 0 {
-			fmt.Fprintf(cmd.ErrOrStderr(), "unknown command %q; expected tui, dl, pack, or config\n", args[0])
+			fmt.Fprintf(cmd.ErrOrStderr(), "unknown command %q; expected tui, dl, pack, config, search, or info\n", args[0])
 			return exitError{2}
 		}
 		dependencies, err := tuiDependencies(output, cmd.Flags().Changed("out"))

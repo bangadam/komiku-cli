@@ -20,10 +20,13 @@ non-interactive downloads and offline repacking for scripts and automation.
 - One-time recovery for downloads created before pack metadata existed
 - Cobra command tree with generated help for TUI, download, pack, and config workflows
 - Headless mode for scripts and automation
+- Headless search (`search`) and series inspection (`info`) with JSON output for scripts
+- `--ch all`, `--ch missing`, and `--ch latest:N` selectors for full-series, gap-filling, and tail downloads
+- Offline `verify <series-dir>` integrity check (magic bytes, page gaps, stray files)
+- `serve` command: a private offline web reader for your downloaded library (folders and CBZ), LAN-accessible
+- `subscribe` / `unsubscribe` / `subs` / `update` — library subscriptions with one-command catch-up across every subscribed series
 
 ## Requirements
-
-- Go 1.25 or newer
 - Network access for search and downloads
 - A terminal with interactive input for the TUI
 
@@ -89,6 +92,128 @@ komiku-cli dl https://komiku.org/manga/example/ \
 ```
 
 `--ch` and `--vol` are mutually exclusive. `--pack` requires a mapped `--vol` selection.
+
+### Search and inspect series
+
+Find a series from the terminal and copy its URL, or pipe it into `jq`:
+
+```sh
+komiku-cli search "sakamoto days"
+komiku-cli search "sakamoto days" --json | jq -r '.[0].URL'
+```
+
+Inspect what a series offers and what you already have locally before
+downloading:
+
+```sh
+komiku-cli info https://komiku.org/manga/example/
+```
+
+Output marks every chapter `[x]` when it is already complete in the
+configured download root, or `[ ]` when it is still missing:
+
+```text
+example  chapters=271 done=200
+[x] 1  https://komiku.org/example-chapter-1/
+[ ] 2  https://komiku.org/example-chapter-2/
+...
+```
+
+`info --json` returns the same data as a machine-readable report.
+
+### Catch-up and gap filling
+
+Download every chapter a series offers, or only the ones you are missing:
+
+```sh
+komiku-cli dl https://komiku.org/manga/example/ --ch all --no-tui
+komiku-cli dl https://komiku.org/manga/example/ --ch missing --no-tui
+```
+
+`--ch missing` re-checks the series page, skips every chapter already marked
+done, and downloads only the remainder — ideal for a weekly cron job:
+
+```cron
+0 9 * * mon  komiku-cli dl https://komiku.org/manga/example/ --ch missing --no-tui --json
+```
+
+When nothing is missing, the command exits 0 and reports the series as
+already complete, so cron jobs stay quiet. `dl --json` prints a structured
+report (requested/started chapters, per-chapter status, page counts, audit
+log path) instead of the human-readable summary lines.
+
+
+## Local web reader
+
+Serve your downloaded library as a private, offline manga reader you open in
+any browser — including a phone or tablet on the same network. It reads your
+chapter folders **and** packed CBZ archives directly; it never contacts
+Komiku.
+
+```sh
+komiku-cli serve
+```
+
+Open the printed local URL. To read on a phone, bind to all interfaces and
+scan the printed LAN URLs:
+
+```sh
+komiku-cli serve --addr 0.0.0.0:8080
+```
+
+The reader UI is a self-contained single-page app with no external
+dependencies: dark theme, keyboard navigation (arrows / escape), and
+per-chapter page counts sourced offline. `serve --json` prints the local and
+LAN URLs as JSON for scripting.
+
+Path traversal into directories outside the library root is rejected, so the
+server only ever exposes content under your configured `--out` directory.
+
+## Subscriptions and catch-up
+
+Track series and download new chapters across your entire library in one
+command — ideal for a weekly cron:
+
+```sh
+komiku-cli subscribe https://komiku.org/manga/example/
+komiku-cli subs                    # list tracked series
+komiku-cli unsubscribe example     # stop tracking (slug or URL)
+```
+
+Catch up on every subscribed series at once:
+
+```sh
+komiku-cli update                  # download new chapters across all subs
+komiku-cli update --check          # dry run: report new chapters only
+komiku-cli update --json           # machine-readable report
+```
+
+`update` discovers each series, skips chapters already marked done, and
+downloads only the remainder — the same gap-filling engine as `--ch missing`.
+When a series is fully caught up, it reports `new=0 downloaded=0 skipped=N`.
+`--check` does a read-only poll (no downloads, no state mutation), so you can
+preview what `update` would fetch. Subscriptions persist in your user config
+directory alongside `config.json`.
+
+### Library dashboard
+
+One offline command to see everything you own:
+
+```sh
+komiku-cli library
+```
+
+```text
+library: /manga  series=2  chapters=213  done=200  cbz=28  size=8.2G  problems=1
+frieren  chapters=12  done=12  cbz=2   size=412.3M  OK [subscribed]
+jjk      chapters=201 done=188 cbz=26  size=7.8G    BROKEN(1)
+  chapter-107: broken=0 missing=1
+```
+
+It scans your download root offline: chapter counts, done progress, packed
+CBZ archives, disk usage, subscription status, and per-chapter integrity
+(the same broken/missing checks as `verify`). `--json` returns the full
+dashboard for scripting. Non-series directories are skipped.
 
 ## Offline packing
 

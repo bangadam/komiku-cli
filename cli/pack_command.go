@@ -16,7 +16,7 @@ import (
 	packer "github.com/bangadam/komiku-cli/pack"
 )
 
-const packCommandUsage = "usage: komiku-cli pack <series-dir> [--vol LIST] [--preset medium|small|tiny|raw] [--recover-wikipedia [--wikipedia-title TITLE]]"
+const packCommandUsage = "usage: komiku-cli pack <series-dir> [--vol LIST] [--preset medium|small|tiny|raw] [--recover-wikipedia [--wikipedia-title TITLE]] [--flat [--series NAME]]"
 
 var executePreparedPack = PackPreparedVolumes
 
@@ -33,6 +33,8 @@ func NewPackCommand(dependencies Dependencies) *cobra.Command {
 	cmd.Flags().String("preset", DefaultPreset, "pack preset")
 	cmd.Flags().Bool("recover-wikipedia", false, "recover a legacy flat run from English Wikipedia")
 	cmd.Flags().String("wikipedia-title", "", "English Wikipedia series title override")
+	cmd.Flags().Bool("flat", false, "pack flat chapter directories into one CBZ without volume mapping")
+	cmd.Flags().String("series", "", "series display name for --flat (defaults to the directory name)")
 	return cmd
 }
 
@@ -41,6 +43,8 @@ func runPack(ctx context.Context, seriesDir string, flags *pflag.FlagSet, stdout
 	presetName, _ := flags.GetString("preset")
 	wikipediaTitle, _ := flags.GetString("wikipedia-title")
 	recoverWikipedia, _ := flags.GetBool("recover-wikipedia")
+	flat, _ := flags.GetBool("flat")
+	seriesName, _ := flags.GetString("series")
 	preset, err := parsePackPreset(presetName)
 	if err != nil {
 		return err
@@ -48,12 +52,23 @@ func runPack(ctx context.Context, seriesDir string, flags *pflag.FlagSet, stdout
 	if !recoverWikipedia && wikipediaTitle != "" {
 		return errors.New("--wikipedia-title requires --recover-wikipedia")
 	}
+	if flat && recoverWikipedia {
+		return errors.New("--flat and --recover-wikipedia are mutually exclusive")
+	}
+	if flat && volumeExpression != "" {
+		return errors.New("--vol requires a volume mapping; --flat has none")
+	}
+	if !flat && seriesName != "" {
+		return errors.New("--series requires --flat")
+	}
 
 	return PackDownloaded(ctx, seriesDir, PackDownloadedOptions{
 		VolumeExpression: volumeExpression,
 		Preset:           preset,
 		RecoverWikipedia: recoverWikipedia,
 		WikipediaTitle:   wikipediaTitle,
+		Flat:             flat,
+		SeriesName:       seriesName,
 		HTTP:             dependencies.HTTP,
 		Output:           stdout,
 	})
@@ -65,6 +80,8 @@ type PackDownloadedOptions struct {
 	RecoverWikipedia bool
 	RecoverComplete  bool
 	WikipediaTitle   string
+	Flat             bool
+	SeriesName       string
 	HTTP             *http.Client
 	Output           io.Writer
 }
@@ -87,7 +104,7 @@ func PackDownloaded(ctx context.Context, seriesDir string, options PackDownloade
 			return fmt.Errorf("prepare recovered pack manifest: %w", err)
 		}
 		defer transaction.Abort()
-		createdArchives, err := recoveryArchiveTransaction(recovery.Plan)
+		createdArchives, err := plannedPackArchives(recovery.Plan)
 		if err != nil {
 			return err
 		}
@@ -112,10 +129,29 @@ func PackDownloaded(ctx context.Context, seriesDir string, options PackDownloade
 		fmt.Fprintf(stdout, "recovered manifest: %s\n", PackManifestPath(seriesDir))
 		return nil
 	}
+	if options.Flat {
+		plan, err := prepareFlatPack(seriesDir, options.SeriesName, options.Preset)
+		if err != nil {
+			return fmt.Errorf("flat pack: %w", err)
+		}
+		if err := validatePackCommandPlan(plan); err != nil {
+			return err
+		}
+		createdArchives, err := plannedPackArchives(plan)
+		if err != nil {
+			return err
+		}
+		if err := executePackCommand(ctx, stdout, plan); err != nil {
+			return errors.Join(err, removeCreatedArchives(createdArchives))
+		}
+		fmt.Fprintf(stdout, "flat pack wrote no .pack.json; rerun after new chapters to pack the wider range\n")
+		return nil
+	}
+
 	plan, err := PrepareManifestPack(seriesDir, options.Preset, options.VolumeExpression)
 	if err != nil {
 		if errors.Is(err, errPackManifestNotFound) {
-			return fmt.Errorf("%w; legacy flat download? recover once with: komiku-cli pack %q --recover-wikipedia", err, seriesDir)
+			return fmt.Errorf("%w; legacy flat download? recover once with: komiku-cli pack %q --recover-wikipedia, or pack without volumes: komiku-cli pack %q --flat", err, seriesDir, seriesDir)
 		}
 		return err
 	}
@@ -162,19 +198,23 @@ func validatePackCommandPlan(plan PackPlan) error {
 	return nil
 }
 
-func recoveryArchiveTransaction(plan PackPlan) ([]string, error) {
+func plannedPackArchives(plan PackPlan) ([]string, error) {
 	created := make([]string, 0, len(plan.Volumes))
 	seen := make(map[string]bool, len(plan.Volumes))
 	for _, volume := range plan.Volumes {
-		path := filepath.Join(volume.SeriesDir, fmt.Sprintf("%s Volume %02d.cbz", volume.Series, volume.Number))
+		archiveName, err := volume.ArchiveName()
+		if err != nil {
+			return nil, err
+		}
+		path := filepath.Join(volume.SeriesDir, archiveName)
 		if seen[path] {
-			return nil, fmt.Errorf("recovery archive target is duplicated: %s", path)
+			return nil, fmt.Errorf("pack archive target is duplicated: %s", path)
 		}
 		seen[path] = true
 		if _, err := os.Lstat(path); err == nil {
-			return nil, fmt.Errorf("recovery refuses to replace pre-existing archive: %s", path)
+			return nil, fmt.Errorf("pack refuses to replace pre-existing archive: %s", path)
 		} else if !errors.Is(err, os.ErrNotExist) {
-			return nil, fmt.Errorf("inspect recovery archive target %s: %w", path, err)
+			return nil, fmt.Errorf("inspect pack archive target %s: %w", path, err)
 		}
 		created = append(created, path)
 	}

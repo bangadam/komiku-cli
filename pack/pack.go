@@ -93,7 +93,23 @@ type Volume struct {
 	SourceRoot string
 	Series     string
 	Number     int
-	Chapters   []Chapter
+	// Title overrides the archive basename; empty uses "Series Volume NN".
+	Title    string
+	Chapters []Chapter
+}
+
+// ArchiveName returns the published CBZ filename for the volume.
+func (volume Volume) ArchiveName() (string, error) {
+	name := volume.Title
+	if name == "" {
+		if err := validateArchiveLeaf(volume.Series); err != nil {
+			return "", err
+		}
+		name = fmt.Sprintf("%s Volume %02d", volume.Series, volume.Number)
+	} else if err := validateArchiveLeaf(name); err != nil {
+		return "", fmt.Errorf("invalid archive title %q", name)
+	}
+	return name + ".cbz", nil
 }
 
 type page struct {
@@ -135,7 +151,8 @@ func PackVolume(ctx context.Context, volume Volume, preset Preset) (Result, erro
 	if err != nil || !os.SameFile(outputInfo, openedOutputInfo) {
 		return Result{}, errors.New("series directory changed while opening")
 	}
-	if err := validateArchiveLeaf(volume.Series); err != nil {
+	archiveName, err := volume.ArchiveName()
+	if err != nil {
 		return Result{}, err
 	}
 	if volume.Number <= 0 || volume.Number > 1000 {
@@ -160,7 +177,7 @@ func PackVolume(ctx context.Context, volume Volume, preset Preset) (Result, erro
 			return Result{}, errors.New("source root changed while opening")
 		}
 	}
-	finalName := fmt.Sprintf("%s Volume %02d.cbz", volume.Series, volume.Number)
+	finalName := archiveName
 	final := filepath.Join(volume.SeriesDir, finalName)
 	result := Result{Path: final, Preset: preset}
 	chapters, err := prepareChapters(sourceRoot, volume.Chapters, preset)

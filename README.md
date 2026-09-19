@@ -18,6 +18,7 @@ non-interactive downloads and offline repacking for scripts and automation.
 - Kindle-oriented image presets plus lossless `raw` packing
 - Persisted pack metadata for later offline repacking
 - One-time recovery for downloads created before pack metadata existed
+- Flat packing of unmapped chapter runs into a single CBZ (`pack --flat`), no volume mapping or network needed
 - Cobra command tree with generated help for TUI, download, pack, and config workflows
 - Headless mode for scripts and automation
 - Headless search (`search`) and series inspection (`info`) with JSON output for scripts
@@ -231,8 +232,21 @@ komiku-cli pack "/path/to/manga/example" \
   --recover-wikipedia --wikipedia-title "Example"
 ```
 
-Recovery reuses local images. It does not request Komiku pages or download
-images. Normal pack runs remain offline.
+Chapters no published volume covers yet (for example a weekly run of the
+newest chapters) can be packed into a single CBZ without any volume mapping
+or network access. The chapters must be contiguous integers on disk:
+
+```sh
+komiku-cli pack "/path/to/manga/newest" \
+  --flat --series "Sakamoto Days" --preset raw
+```
+
+This writes `Sakamoto Days Chapters 256-275.cbz` (a single chapter becomes
+`... Chapter 256.cbz`) and no `.pack.json`; rerun it after downloading more
+chapters to pack the wider range.
+
+Recovery and flat packing reuse local images. Neither requests Komiku pages
+nor downloads images. Normal pack runs remain offline.
 
 ## CBZ presets
 

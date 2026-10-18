@@ -22,10 +22,12 @@ non-interactive downloads and offline repacking for scripts and automation.
 - Cobra command tree with generated help for TUI, download, pack, and config workflows
 - Headless mode for scripts and automation
 - Headless search (`search`) and series inspection (`info`) with JSON output for scripts
+- Cover art saved locally from the series page (`cover`, `cover --all`, or automatically after `dl`)
 - `--ch all`, `--ch missing`, and `--ch latest:N` selectors for full-series, gap-filling, and tail downloads
 - Offline `verify <series-dir>` integrity check (magic bytes, page gaps, stray files)
-- `serve` command: a private offline web reader for your downloaded library (folders and CBZ), LAN-accessible
-- `subscribe` / `unsubscribe` / `subs` / `update` — library subscriptions with one-command catch-up across every subscribed series
+- `update` — one-command catch-up across downloaded series in your local library
+- Headless discovery: `ranking`, `trending`, `latest`, `new`, `random`, `catalog`, `genres`, and `genre <name>` with JSON output
+- Desktop GUI (Tauri + React) in `gui/` that drives the real binary, including a browser dev bridge and a Playwright E2E suite
 
 ## Requirements
 - Network access for search and downloads
@@ -122,6 +124,28 @@ example  chapters=271 done=200
 
 `info --json` returns the same data as a machine-readable report.
 
+### Cover art
+
+Cover art comes from the series page on Komiku itself, saved next to the
+chapters as `cover.jpg` (or `.png` / `.webp`):
+
+```sh
+komiku-cli cover https://komiku.org/manga/example/
+komiku-cli cover --all          # backfill every series in the library
+komiku-cli cover --all --force  # refresh existing covers
+```
+
+`dl` saves the cover automatically after a finished download. Pass `--cover=false`
+to skip it. Covers are decoration: a failed cover fetch never fails a download.
+
+The GUI reads the saved files and shows them in the library grid, the series
+hero, and search results; the **Fetch covers** button on the library screen runs
+the `--all` backfill.
+
+Google Images is intentionally not used as a source: it blocks non-browser
+clients, and its results are not reliably the official cover for the edition
+being read.
+
 ### Catch-up and gap filling
 
 Download every chapter a series offers, or only the ones you are missing:
@@ -144,57 +168,24 @@ report (requested/started chapters, per-chapter status, page counts, audit
 log path) instead of the human-readable summary lines.
 
 
-## Local web reader
+## Library catch-up
 
-Serve your downloaded library as a private, offline manga reader you open in
-any browser — including a phone or tablet on the same network. It reads your
-chapter folders **and** packed CBZ archives directly; it never contacts
-Komiku.
+Download missing chapters across series already downloaded to your local
+library in one command:
 
 ```sh
-komiku-cli serve
-```
-
-Open the printed local URL. To read on a phone, bind to all interfaces and
-scan the printed LAN URLs:
-
-```sh
-komiku-cli serve --addr 0.0.0.0:8080
-```
-
-The reader UI is a self-contained single-page app with no external
-dependencies: dark theme, keyboard navigation (arrows / escape), and
-per-chapter page counts sourced offline. `serve --json` prints the local and
-LAN URLs as JSON for scripting.
-
-Path traversal into directories outside the library root is rejected, so the
-server only ever exposes content under your configured `--out` directory.
-
-## Subscriptions and catch-up
-
-Track series and download new chapters across your entire library in one
-command — ideal for a weekly cron:
-
-```sh
-komiku-cli subscribe https://komiku.org/manga/example/
-komiku-cli subs                    # list tracked series
-komiku-cli unsubscribe example     # stop tracking (slug or URL)
-```
-
-Catch up on every subscribed series at once:
-
-```sh
-komiku-cli update                  # download new chapters across all subs
-komiku-cli update --check          # dry run: report new chapters only
+komiku-cli update                  # catch up on downloaded library series
+komiku-cli update --check          # dry run: report missing chapters only
 komiku-cli update --json           # machine-readable report
+komiku-cli update --out /path/to/manga  # use a different library root
 ```
 
-`update` discovers each series, skips chapters already marked done, and
-downloads only the remainder — the same gap-filling engine as `--ch missing`.
-When a series is fully caught up, it reports `new=0 downloaded=0 skipped=N`.
+`update` scans the configured download root, discovers each local series,
+skips chapters already marked done, and downloads only the remainder — the
+same gap-filling engine as `--ch missing`. When a series is fully caught up,
+it reports `new=0 downloaded=0 skipped=N`.
 `--check` does a read-only poll (no downloads, no state mutation), so you can
-preview what `update` would fetch. Subscriptions persist in your user config
-directory alongside `config.json`.
+preview what `update` would fetch. An empty library reports no series to update.
 
 ### Library dashboard
 
@@ -206,15 +197,37 @@ komiku-cli library
 
 ```text
 library: /manga  series=2  chapters=213  done=200  cbz=28  size=8.2G  problems=1
-frieren  chapters=12  done=12  cbz=2   size=412.3M  OK [subscribed]
+frieren  chapters=12  done=12  cbz=2   size=412.3M  OK
 jjk      chapters=201 done=188 cbz=26  size=7.8G    BROKEN(1)
   chapter-107: broken=0 missing=1
 ```
 
 It scans your download root offline: chapter counts, done progress, packed
-CBZ archives, disk usage, subscription status, and per-chapter integrity
+CBZ archives, disk usage, and per-chapter integrity
 (the same broken/missing checks as `verify`). `--json` returns the full
 dashboard for scripting. Non-series directories are skipped.
+
+## Discovery
+
+Browse komiku.org without downloading anything. Every command supports
+`--json` for scripts and for the desktop GUI.
+
+```sh
+komiku-cli ranking --period harian        # harian | mingguan | bulanan | total
+komiku-cli trending --period 7d --limit 20  # 24h | 7d | 30d | active
+komiku-cli latest --type manga --page 2   # newest chapters
+komiku-cli new --type manhwa              # newest titles
+komiku-cli random                         # random selection
+komiku-cli catalog --letter A --page 2    # A–Z catalogue, with alphabet counts
+komiku-cli genres                         # genre index with title counts
+komiku-cli genre action --sort rating     # update | date | rating | random
+komiku-cli latest --genre action --genre2 fantasy   # combine two genres
+```
+
+Each command returns the same series shape: title, slug, URL, cover,
+type, genres, status, rank, views, latest chapter and update time. Cover
+URLs are rewritten from `thumbnail.komiku.to` to `thumbnail.komiku.org`,
+because the `.to` host does not resolve on every network.
 
 ## Offline packing
 
@@ -232,9 +245,51 @@ komiku-cli pack "/path/to/manga/example" \
   --recover-wikipedia --wikipedia-title "Example"
 ```
 
+If you already know the mapping — for example because the desktop app is
+showing it — pass it with `--volume-map` and the pack stays offline. The
+mapping is saved as `.pack.json`, so later runs need neither the flag nor a
+lookup:
+
+```sh
+komiku-cli pack "/path/to/manga/example" \
+  --volume-map "1:1-5,2:6-14,3:15-23" --vol 1-3 --preset raw
+```
+
+`info --offline` prints the same mapping from disk (provider cache first, then
+`.pack.json`) and never touches the network, which is what the desktop app
+uses to render the volume list before packing:
+
+```sh
+komiku-cli info "https://komiku.org/manga/example/" --offline --volumes --json
+```
+
+Volume mappings come from **MangaDex by default**. It is queried without a
+language filter, because MangaDex spreads volume labels across scanlation
+languages and an English-only query drops most of them. Pick another provider
+with `--volume-source`:
+
+| Value | Behaviour |
+| --- | --- |
+| `mangadex` (default) | MangaDex aggregate endpoint only |
+| `auto` | MangaDex, then Wikipedia list/main article/search, then Fandom |
+| `wikipedia` | English Wikipedia only (one page fetch for `--recover-wikipedia`) |
+| `fandom` | Community Fandom wiki only |
+
+`--volume-source` works on `dl`, `pack`, and `info`. An explicit value wins
+over an existing `.volumes.json` cache; without the flag the cache is
+authoritative, so editing that file pins a manual mapping.
+
+MangaDex coverage is uneven — it can stop several volumes short or have gaps
+(e.g. Dandadan has 1-10 and 23 but nothing between). When that happens the
+error names the missing volumes and the covered range, so you can retry with
+`--volume-source auto` or write the mapping yourself.
+
 Chapters no published volume covers yet (for example a weekly run of the
 newest chapters) can be packed into a single CBZ without any volume mapping
-or network access. The chapters must be contiguous integers on disk:
+or network access. Missing chapters are tolerated and packed around; the
+archive name spans the first-to-last chapter on disk, so gaps are invisible
+to the name. Fractional chapters (1.1, 2.5, ...) have no volume to group
+them and are packed inline between their integer neighbours:
 
 ```sh
 komiku-cli pack "/path/to/manga/newest" \
@@ -311,6 +366,39 @@ Build the CLI:
 ```sh
 go build -o /tmp/komiku-cli ./cmd/komiku-cli
 ```
+
+Run the live discovery tests (they hit komiku.org):
+
+```sh
+go test ./komiku/ -tags online -run TestOnline
+```
+
+### Desktop GUI
+
+```sh
+cd gui
+pnpm install
+pnpm desktop     # Tauri window
+pnpm dev         # browser at :1420, backed by the real CLI through a dev bridge
+```
+
+`pnpm dev` serves the same CLI operations the Tauri build invokes over IPC, so
+the browser renders real library and discovery data. The bridge lives in
+`gui/vite-plugin-cli-bridge.ts`, is `apply: "serve"` only, and is tree-shaken
+out of a production bundle.
+
+End-to-end tests drive the real binary through the UI with a hermetic `HOME`:
+
+```sh
+cd gui
+python3 e2e/run.py            # full suite
+python3 e2e/run.py --headed   # watch it run
+python3 e2e/fixture.py /tmp/komiku-e2e   # rebuild the fixture library
+```
+
+The fixture creates a real library (chapter folders with valid image pages,
+`.state.json`, CBZ archives, cover art) so the GUI is exercised against actual
+CLI output rather than mocks.
 
 ## Disclaimer
 

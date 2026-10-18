@@ -4,13 +4,16 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"net/url"
 	"os"
 	"path/filepath"
 	"sort"
+	"strconv"
 	"strings"
 
 	"github.com/spf13/cobra"
 
+	"github.com/bangadam/komiku-cli/komiku"
 	"github.com/bangadam/komiku-cli/store"
 )
 
@@ -20,14 +23,17 @@ const libraryCommandUsage = "usage: komiku-cli library [--out DIR] [--json]"
 type LibrarySeries struct {
 	Slug           string   `json:"slug"`
 	Dir            string   `json:"dir"`
-	Chapters       int      `json:"chapters"`        // chapter dirs on disk
-	Done           int      `json:"done"`            // chapters marked done in state
-	CBZ            int      `json:"cbz"`             // packed CBZ archives
-	Bytes          int64    `json:"bytes"`           // total disk usage
-	Subscribed     bool     `json:"subscribed"`      // tracked for updates
-	Healthy        bool     `json:"healthy"`         // no broken pages / gaps
-	Problems       int      `json:"problems"`        // chapters with broken pages or gaps
+	Chapters       int      `json:"chapters"` // chapter dirs on disk
+	Done           int      `json:"done"`     // chapters marked done in state
+	CBZ            int      `json:"cbz"`      // packed CBZ archives
+	Bytes          int64    `json:"bytes"`    // total disk usage
+	Healthy        bool     `json:"healthy"`  // no broken pages / gaps
+	Problems       int      `json:"problems"` // chapters with broken pages or gaps
 	ProblemsDetail []string `json:"problems_detail,omitempty"`
+	Cover          string   `json:"cover,omitempty"` // local cover file, when saved
+	// SeriesURL is the recorded source URL when one is known (pack manifest or
+	// subscription). The GUI must not guess it from the directory slug.
+	SeriesURL string `json:"series_url,omitempty"`
 }
 
 // LibraryReport is the full offline library dashboard.
@@ -66,7 +72,7 @@ func runLibrary(output string, asJSON bool, stdout io.Writer, dependencies Depen
 	if err != nil {
 		return err
 	}
-	report, err := scanLibrary(config.OutputRoot, dependencies)
+	report, err := scanLibrary(config.OutputRoot)
 	if err != nil {
 		return err
 	}
@@ -84,11 +90,7 @@ func runLibrary(output string, asJSON bool, stdout io.Writer, dependencies Depen
 		if s.Problems > 0 {
 			status = fmt.Sprintf("BROKEN(%d)", s.Problems)
 		}
-		sub := ""
-		if s.Subscribed {
-			sub = " [subscribed]"
-		}
-		fmt.Fprintf(stdout, "%-8s chapters=%-4d done=%-4d cbz=%-3d size=%-8s %s%s\n", s.Slug, s.Chapters, s.Done, s.CBZ, humanBytes(s.Bytes), status, sub)
+		fmt.Fprintf(stdout, "%-8s chapters=%-4d done=%-4d cbz=%-3d size=%-8s %s\n", s.Slug, s.Chapters, s.Done, s.CBZ, humanBytes(s.Bytes), status)
 		for _, detail := range s.ProblemsDetail {
 			fmt.Fprintf(stdout, "  %s\n", detail)
 		}
@@ -96,9 +98,18 @@ func runLibrary(output string, asJSON bool, stdout io.Writer, dependencies Depen
 	return nil
 }
 
-// scanLibrary walks the output root and builds the dashboard. It also
-// cross-references the subscription list to flag tracked series.
-func scanLibrary(root string, dependencies Dependencies) (LibraryReport, error) {
+// scanLibrary walks the output root and builds the dashboard.
+// recordedSeriesURL returns the source URL the CLI actually recorded for this
+// series. It deliberately never derives one from the directory name: a slug is
+// not a URL, and guessing produced 404s for renamed or fixture series.
+func recordedSeriesURL(dir string) string {
+	if manifest, err := LoadPackManifest(dir); err == nil {
+		return manifest.SeriesURL
+	}
+	return ""
+}
+
+func scanLibrary(root string) (LibraryReport, error) {
 	report := LibraryReport{Root: root}
 	entries, err := os.ReadDir(root)
 	if err != nil {
@@ -106,15 +117,6 @@ func scanLibrary(root string, dependencies Dependencies) (LibraryReport, error) 
 			return report, nil
 		}
 		return report, fmt.Errorf("read library root: %w", err)
-	}
-
-	subsPath := dependencies.subsPath()
-	subs, subsErr := LoadSubscriptions(subsPath)
-	subscribed := make(map[string]bool)
-	if subsErr == nil {
-		for _, sub := range subs.Subscriptions {
-			subscribed[sub.Slug] = true
-		}
 	}
 
 	for _, entry := range entries {
@@ -127,7 +129,11 @@ func scanLibrary(root string, dependencies Dependencies) (LibraryReport, error) 
 		if !looksLikeSeries(dir) {
 			continue
 		}
-		s := LibrarySeries{Slug: slug, Dir: dir, Healthy: true, Subscribed: subscribed[slug]}
+		s := LibrarySeries{Slug: slug, Dir: dir, Healthy: true}
+		if cover, ok := existingCover(dir); ok {
+			s.Cover = cover
+		}
+		s.SeriesURL = recordedSeriesURL(dir)
 
 		// Count chapters from directory layout (flat + mapped).
 		chapterDirs := collectChapterDirs(dir)
@@ -200,6 +206,86 @@ func looksLikeSeries(dir string) bool {
 		}
 		if !e.IsDir() && strings.EqualFold(filepath.Ext(e.Name()), ".cbz") {
 			return true
+		}
+	}
+	return false
+}
+
+type localSeriesTarget struct {
+	Slug string
+	URL  string
+}
+
+// localSeriesTargets resolves URLs for the series already present in the library.
+func localSeriesTargets(root string, dependencies Dependencies) ([]localSeriesTarget, error) {
+	entries, err := os.ReadDir(root)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return nil, nil
+		}
+		return nil, fmt.Errorf("read library root: %w", err)
+	}
+	var targets []localSeriesTarget
+	for _, entry := range entries {
+		if !entry.IsDir() || !looksLikeSeries(filepath.Join(root, entry.Name())) {
+			continue
+		}
+		seriesURL, err := localSeriesURL(root, entry.Name(), dependencies.BaseURL)
+		if err != nil {
+			continue
+		}
+		targets = append(targets, localSeriesTarget{Slug: entry.Name(), URL: seriesURL})
+	}
+	return targets, nil
+}
+
+// localSeriesURL prefers the recorded URL and falls back to the directory slug
+// for older downloads without a pack manifest.
+func localSeriesURL(root, slug, baseURL string) (string, error) {
+	if manifest, err := LoadPackManifest(filepath.Join(root, slug)); err == nil && manifest.SeriesURL != "" {
+		return manifest.SeriesURL, nil
+	}
+	if baseURL == "" {
+		baseURL = komiku.DefaultBaseURL
+	}
+	seriesURL := strings.TrimSuffix(baseURL, "/") + "/manga/" + url.PathEscape(slug) + "/"
+	if _, err := komiku.ValidateSeriesURL(seriesURL); err != nil {
+		return "", err
+	}
+	return seriesURL, nil
+}
+
+// seriesHasDownloads excludes metadata-only and empty placeholder directories
+// from updates. Partial chapter pages still count so failed downloads can resume.
+func seriesHasDownloads(dir string) bool {
+	if done, err := store.ReadDone(filepath.Dir(dir), filepath.Base(dir)); err == nil && len(done) > 0 {
+		return true
+	}
+	if manifest, err := LoadPackManifest(dir); err == nil && len(manifest.Chapters) > 0 {
+		return true
+	}
+	entries, _ := os.ReadDir(dir)
+	for _, entry := range entries {
+		if strings.EqualFold(filepath.Ext(entry.Name()), ".cbz") {
+			if info, err := entry.Info(); err == nil && info.Mode().IsRegular() && info.Size() > 0 {
+				return true
+			}
+		}
+	}
+	for _, chapterDir := range collectChapterDirs(dir) {
+		pages, _ := os.ReadDir(chapterDir)
+		for _, page := range pages {
+			ext := filepath.Ext(page.Name())
+			switch strings.ToLower(ext) {
+			case ".jpg", ".jpeg", ".png", ".webp":
+				number, err := strconv.Atoi(strings.TrimSuffix(page.Name(), ext))
+				if err != nil || number < 1 {
+					continue
+				}
+				if info, err := page.Info(); err == nil && info.Mode().IsRegular() && info.Size() > 0 {
+					return true
+				}
+			}
 		}
 	}
 	return false

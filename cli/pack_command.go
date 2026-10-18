@@ -14,9 +14,11 @@ import (
 	"github.com/spf13/pflag"
 
 	packer "github.com/bangadam/komiku-cli/pack"
+
+	"github.com/bangadam/komiku-cli/komiku"
 )
 
-const packCommandUsage = "usage: komiku-cli pack <series-dir> [--vol LIST] [--preset medium|small|tiny|raw] [--recover-wikipedia [--wikipedia-title TITLE]] [--flat [--series NAME]]"
+const packCommandUsage = "usage: komiku-cli pack <series-dir> [--vol LIST] [--volume-map V:S-E,...] [--preset medium|small|tiny|raw] [--recover-wikipedia [--wikipedia-title TITLE]] [--flat [--series NAME]]"
 
 var executePreparedPack = PackPreparedVolumes
 
@@ -35,6 +37,8 @@ func NewPackCommand(dependencies Dependencies) *cobra.Command {
 	cmd.Flags().String("wikipedia-title", "", "English Wikipedia series title override")
 	cmd.Flags().Bool("flat", false, "pack flat chapter directories into one CBZ without volume mapping")
 	cmd.Flags().String("series", "", "series display name for --flat (defaults to the directory name)")
+	cmd.Flags().String("volume-source", "mangadex", "volume mapping source: mangadex (default), auto, wikipedia, or fandom")
+	cmd.Flags().String("volume-map", "", "volume mapping as V:START-END,... (packs offline without a manifest)")
 	return cmd
 }
 
@@ -45,6 +49,17 @@ func runPack(ctx context.Context, seriesDir string, flags *pflag.FlagSet, stdout
 	recoverWikipedia, _ := flags.GetBool("recover-wikipedia")
 	flat, _ := flags.GetBool("flat")
 	seriesName, _ := flags.GetString("series")
+	volumeSourceName, _ := flags.GetString("volume-source")
+	volumeMapExpression, _ := flags.GetString("volume-map")
+	// --recover-wikipedia is an explicit request for the Wikipedia provider,
+	// so it wins over the MangaDex default unless --volume-source was passed.
+	if recoverWikipedia && !flags.Changed("volume-source") {
+		volumeSourceName = string(komiku.VolumeSourceWikipedia)
+	}
+	volumeSource, err := komiku.ParseVolumeSource(volumeSourceName)
+	if err != nil {
+		return err
+	}
 	preset, err := parsePackPreset(presetName)
 	if err != nil {
 		return err
@@ -58,14 +73,29 @@ func runPack(ctx context.Context, seriesDir string, flags *pflag.FlagSet, stdout
 	if flat && volumeExpression != "" {
 		return errors.New("--vol requires a volume mapping; --flat has none")
 	}
+	if flat && volumeMapExpression != "" {
+		return errors.New("--volume-map cannot be combined with --flat")
+	}
+	if recoverWikipedia && volumeMapExpression != "" {
+		return errors.New("--volume-map cannot be combined with --recover-wikipedia")
+	}
 	if !flat && seriesName != "" {
 		return errors.New("--series requires --flat")
+	}
+	var mappings []komiku.Volume
+	if volumeMapExpression != "" {
+		mappings, err = ParseVolumeMap(volumeMapExpression)
+		if err != nil {
+			return err
+		}
 	}
 
 	return PackDownloaded(ctx, seriesDir, PackDownloadedOptions{
 		VolumeExpression: volumeExpression,
+		Mappings:         mappings,
 		Preset:           preset,
 		RecoverWikipedia: recoverWikipedia,
+		VolumeSource:     volumeSource,
 		WikipediaTitle:   wikipediaTitle,
 		Flat:             flat,
 		SeriesName:       seriesName,
@@ -76,9 +106,13 @@ func runPack(ctx context.Context, seriesDir string, flags *pflag.FlagSet, stdout
 
 type PackDownloadedOptions struct {
 	VolumeExpression string
+	// Mappings is an explicit, already-resolved volume mapping (for example
+	// the one the GUI displays). When set, packing stays offline.
+	Mappings         []komiku.Volume
 	Preset           packer.Preset
 	RecoverWikipedia bool
 	RecoverComplete  bool
+	VolumeSource     komiku.VolumeSource
 	WikipediaTitle   string
 	Flat             bool
 	SeriesName       string
@@ -92,65 +126,40 @@ func PackDownloaded(ctx context.Context, seriesDir string, options PackDownloade
 		stdout = io.Discard
 	}
 	if options.RecoverWikipedia {
-		recovery, err := prepareWikipediaRecovery(ctx, seriesDir, options.WikipediaTitle, options.VolumeExpression, options.Preset, options.HTTP, options.RecoverComplete)
-		if err != nil {
-			return fmt.Errorf("recover Wikipedia mapping: %w", err)
+		// Direct API callers may leave VolumeSource empty; --recover-wikipedia
+		// has always meant the Wikipedia provider.
+		if options.VolumeSource == "" {
+			options.VolumeSource = komiku.VolumeSourceWikipedia
 		}
-		if err := validatePackCommandPlan(recovery.Plan); err != nil {
-			return err
-		}
-		transaction, err := prepareRecoveredPackManifest(seriesDir, recovery.Series, recovery.Mappings, recovery.Sources)
-		if err != nil {
-			return fmt.Errorf("prepare recovered pack manifest: %w", err)
-		}
-		defer transaction.Abort()
-		createdArchives, err := plannedPackArchives(recovery.Plan)
-		if err != nil {
-			return err
-		}
-		if err := executePackCommand(ctx, stdout, recovery.Plan); err != nil {
-			return errors.Join(err, removeCreatedArchives(createdArchives))
-		}
-		if err := transaction.Commit(); err != nil {
-			var cleanupErr error
-			if !transaction.HasPublishedManifest() {
-				cleanupErr = removeCreatedArchives(createdArchives)
-			}
-			return errors.Join(fmt.Errorf("save recovered pack manifest: %w", err), cleanupErr)
-		}
-		fmt.Fprintf(stdout, "Wikipedia source: %s title=%q\n", recovery.SourceURL, recovery.Title)
-		if len(recovery.Ignored) > 0 {
-			label := "ignored local chapters outside --vol"
-			if options.RecoverComplete {
-				label = "left unchanged because they are outside complete volumes"
-			}
-			fmt.Fprintf(stdout, "%s: %s\n", label, strings.Join(recovery.Ignored, ","))
-		}
-		fmt.Fprintf(stdout, "recovered manifest: %s\n", PackManifestPath(seriesDir))
-		return nil
+		return packWithRecovery(ctx, stdout, seriesDir, options)
 	}
 	if options.Flat {
-		plan, err := prepareFlatPack(seriesDir, options.SeriesName, options.Preset)
-		if err != nil {
-			return fmt.Errorf("flat pack: %w", err)
-		}
-		if err := validatePackCommandPlan(plan); err != nil {
-			return err
-		}
-		createdArchives, err := plannedPackArchives(plan)
-		if err != nil {
-			return err
-		}
-		if err := executePackCommand(ctx, stdout, plan); err != nil {
-			return errors.Join(err, removeCreatedArchives(createdArchives))
-		}
-		fmt.Fprintf(stdout, "flat pack wrote no .pack.json; rerun after new chapters to pack the wider range\n")
-		return nil
+		return runFlatPack(ctx, seriesDir, options)
+	}
+	if len(options.Mappings) > 0 {
+		// The caller already resolved the mapping (the GUI shows it), so pack
+		// offline instead of re-fetching it. An existing manifest is merged so
+		// packing the next batch of volumes keeps working.
+		return packWithExplicitMapping(ctx, stdout, seriesDir, options)
 	}
 
 	plan, err := PrepareManifestPack(seriesDir, options.Preset, options.VolumeExpression)
 	if err != nil {
 		if errors.Is(err, errPackManifestNotFound) {
+			if options.VolumeExpression != "" {
+				// A cached mapping already on disk is enough to pack offline;
+				// only ask a provider when the series has never been mapped.
+				if local, localErr := localPackMapping(seriesDir); localErr == nil && len(local) > 0 {
+					fmt.Fprintf(stdout, "no pack manifest found; using the local volume mapping\n")
+					options.Mappings = local
+					return packWithExplicitMapping(ctx, stdout, seriesDir, options)
+				}
+				// The folder was downloaded without --vol, so no manifest
+				// exists. Rebuild the volume mapping from an online source and
+				// pack the local chapters instead of failing outright.
+				fmt.Fprintf(stdout, "no local volume mapping; resolving it from an online source\n")
+				return packWithRecovery(ctx, stdout, seriesDir, options)
+			}
 			return fmt.Errorf("%w; legacy flat download? recover once with: komiku-cli pack %q --recover-wikipedia, or pack without volumes: komiku-cli pack %q --flat", err, seriesDir, seriesDir)
 		}
 		return err
@@ -168,6 +177,29 @@ func parsePackPreset(value string) (packer.Preset, error) {
 	default:
 		return "", fmt.Errorf("unknown preset %q; expected medium, small, tiny, or raw", value)
 	}
+}
+
+func runFlatPack(ctx context.Context, seriesDir string, options PackDownloadedOptions) error {
+	stdout := options.Output
+	if stdout == nil {
+		stdout = io.Discard
+	}
+	plan, err := prepareFlatPack(seriesDir, options.SeriesName, options.Preset)
+	if err != nil {
+		return fmt.Errorf("flat pack: %w", err)
+	}
+	if err := validatePackCommandPlan(plan); err != nil {
+		return err
+	}
+	createdArchives, err := plannedPackArchives(plan)
+	if err != nil {
+		return err
+	}
+	if err := executePackCommand(ctx, stdout, plan); err != nil {
+		return errors.Join(err, removeCreatedArchives(createdArchives))
+	}
+	fmt.Fprintf(stdout, "flat pack wrote no .pack.json; rerun after new chapters to pack the wider range\n")
+	return nil
 }
 
 func validatePackCommandPlan(plan PackPlan) error {
@@ -251,4 +283,54 @@ func executePackCommand(ctx context.Context, stdout io.Writer, plan PackPlan) er
 		return packErr
 	}
 	return volumeErr
+}
+
+// packWithRecovery rebuilds a volume mapping from an online source and packs
+// the local chapter folders. Used by --recover-wikipedia and automatically
+// when a flat download is packed with --vol but has no manifest yet.
+func packWithRecovery(ctx context.Context, stdout io.Writer, seriesDir string, options PackDownloadedOptions) error {
+	recovery, err := prepareVolumeRecovery(ctx, seriesDir, options.WikipediaTitle, options.VolumeExpression, options.Preset, options.HTTP, options.RecoverComplete, options.VolumeSource)
+	if err != nil {
+		if errors.Is(err, komiku.ErrNoWikipediaVolumeRows) {
+			fmt.Fprintf(stdout, "no volume grouping found for this series; packing the flat chapter range instead\n")
+			return runFlatPack(ctx, seriesDir, options)
+		}
+		return fmt.Errorf("recover volume mapping: %w", err)
+	}
+	if err := validatePackCommandPlan(recovery.Plan); err != nil {
+		return err
+	}
+	transaction, err := prepareRecoveredPackManifest(seriesDir, recovery.Series, recovery.Mappings, recovery.Sources)
+	if err != nil {
+		return fmt.Errorf("prepare recovered pack manifest: %w", err)
+	}
+	defer transaction.Abort()
+	createdArchives, err := plannedPackArchives(recovery.Plan)
+	if err != nil {
+		return err
+	}
+	if err := executePackCommand(ctx, stdout, recovery.Plan); err != nil {
+		return errors.Join(err, removeCreatedArchives(createdArchives))
+	}
+	if err := transaction.Commit(); err != nil {
+		var cleanupErr error
+		if !transaction.HasPublishedManifest() {
+			cleanupErr = removeCreatedArchives(createdArchives)
+		}
+		return errors.Join(fmt.Errorf("save recovered pack manifest: %w", err), cleanupErr)
+	}
+	if strings.Contains(recovery.SourceURL, "wikipedia.org") {
+		fmt.Fprintf(stdout, "Wikipedia source: %s title=%q\n", recovery.SourceURL, recovery.Title)
+	} else {
+		fmt.Fprintf(stdout, "volume mapping source: %s title=%q\n", recovery.SourceURL, recovery.Title)
+	}
+	if len(recovery.Ignored) > 0 {
+		label := "ignored local chapters outside --vol"
+		if options.RecoverComplete {
+			label = "left unchanged because they are outside complete volumes"
+		}
+		fmt.Fprintf(stdout, "%s: %s\n", label, strings.Join(recovery.Ignored, ","))
+	}
+	fmt.Fprintf(stdout, "recovered manifest: %s\n", PackManifestPath(seriesDir))
+	return nil
 }

@@ -3,20 +3,18 @@ package cli
 import (
 	"errors"
 	"fmt"
-	"math"
 	"os"
 	"path/filepath"
 	"sort"
 	"strings"
 
-	"github.com/bangadam/komiku-cli/komiku"
 	packer "github.com/bangadam/komiku-cli/pack"
 )
 
 // prepareFlatPack plans a single CBZ from legacy flat chapter directories
 // without a volume mapping, a .state.json, or any network access. The archive
-// spans the contiguous local chapter range, so it works for chapters that no
-// published volume covers yet.
+// spans the local chapter range; missing chapters are tolerated and packed
+// around, so it works for partially downloaded series.
 func prepareFlatPack(seriesDir, seriesOverride string, preset packer.Preset) (PackPlan, error) {
 	root, err := canonicalSeriesRoot(seriesDir)
 	if err != nil {
@@ -46,41 +44,21 @@ func prepareFlatPack(seriesDir, seriesOverride string, preset packer.Preset) (Pa
 		numbers = append(numbers, number)
 	}
 	sort.Float64s(numbers)
-	for _, number := range numbers {
-		if number != math.Trunc(number) {
-			return PackPlan{}, fmt.Errorf("flat pack requires integer chapters; chapter %s has no volume mapping and cannot be grouped", formatRecoveredNumber(number))
-		}
-	}
-	for index := 1; index < len(numbers); index++ {
-		if numbers[index] != numbers[index-1]+1 {
-			return PackPlan{}, fmt.Errorf("flat chapters are not contiguous: chapter %s is missing between %s and %s", formatRecoveredNumber(numbers[index-1]+1), formatRecoveredNumber(numbers[index-1]), formatRecoveredNumber(numbers[index]))
-		}
-	}
-	start, end := int(numbers[0]), int(numbers[len(numbers)-1])
-	sources := make([]PackChapterSource, 0, len(numbers))
+	chapters := make([]packer.Chapter, 0, len(numbers))
 	for _, number := range numbers {
 		chapter := local[number]
 		relative, pages, err := validatePackSource(root, chapter.SourceDir)
 		if err != nil {
 			return PackPlan{}, fmt.Errorf("flat chapter %s source: %w", chapter.Display, err)
 		}
-		sources = append(sources, PackChapterSource{Chapter: komiku.Chapter{Display: chapter.Display, Number: number}, Volume: 1, Dir: relative, ExpectedPages: pages, Complete: true})
-	}
-	plan := preparePackSources(root, root, series, preset, []komiku.Volume{{Volume: 1, Start: start, End: end}}, sources)
-	if len(plan.Skipped) > 0 {
-		return PackPlan{}, fmt.Errorf("flat range %d-%d cannot be packed: %s", start, end, plan.Skipped[0].Reason)
-	}
-	if plan.DisabledReason != "" || len(plan.Volumes) == 0 {
-		if plan.DisabledReason == "" {
-			plan.DisabledReason = "No flat chapter is complete."
-		}
-		return PackPlan{}, errors.New(plan.DisabledReason)
+		chapters = append(chapters, packer.Chapter{Number: number, Display: chapter.Display, Dir: relative, ExpectedPages: pages})
 	}
 	first, last := local[numbers[0]].Display, local[numbers[len(numbers)-1]].Display
 	title := fmt.Sprintf("%s Chapters %s-%s", series, first, last)
-	if start == end {
+	if len(chapters) == 1 {
 		title = fmt.Sprintf("%s Chapter %s", series, first)
 	}
-	plan.Volumes[0].Title = title
-	return plan, nil
+	return PackPlan{Preset: preset, Volumes: []packer.Volume{{
+		SeriesDir: root, SourceRoot: root, Series: series, Number: 1, Title: title, Chapters: chapters,
+	}}}, nil
 }

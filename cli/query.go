@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"path/filepath"
 	"strings"
 	"time"
 
@@ -86,10 +87,16 @@ type ChapterInfo struct {
 
 // SeriesInfo is the headless series report printed by info.
 type SeriesInfo struct {
-	Series    string        `json:"series"`
-	SeriesURL string        `json:"series_url,omitempty"`
-	Chapters  []ChapterInfo `json:"chapters"`
-	DoneCount int           `json:"done_count"`
+	Series    string          `json:"series"`
+	SeriesURL string          `json:"series_url,omitempty"`
+	Chapters  []ChapterInfo   `json:"chapters"`
+	DoneCount int             `json:"done_count"`
+	Volumes   []komiku.Volume `json:"volumes,omitempty"`
+	// VolumeError reports why the optional volume mapping is unavailable. The
+	// chapter list is still complete, so callers can fall back to a flat pack.
+	VolumeError string `json:"volume_error,omitempty"`
+	// Cover is the local cover file for this series, when one was saved.
+	Cover string `json:"cover,omitempty"`
 }
 
 func NewInfoCommand(dependencies Dependencies) *cobra.Command {
@@ -103,6 +110,9 @@ func NewInfoCommand(dependencies Dependencies) *cobra.Command {
 	}
 	cmd.Flags().String("out", "", "download root to inspect")
 	cmd.Flags().Bool("json", false, "print series info as JSON")
+	cmd.Flags().Bool("volumes", false, "include the volume mapping (cache first, then an online source)")
+	cmd.Flags().Bool("offline", false, "read chapters and volumes from disk only; never touch the network")
+	cmd.Flags().String("volume-source", "mangadex", "volume mapping source: mangadex (default), auto, wikipedia, or fandom")
 	return cmd
 }
 
@@ -115,14 +125,6 @@ func runInfo(ctx context.Context, seriesURL string, flags *pflag.FlagSet, stdout
 	if series == "" {
 		return fmt.Errorf("cannot derive series directory from URL %q", seriesURL)
 	}
-	client := dependencies.newKomikuClient(0)
-	chapters, err := client.Discover(ctx, seriesURL)
-	if err != nil {
-		return fmt.Errorf("discover chapters: %w", err)
-	}
-	if len(chapters) == 0 {
-		return errors.New("series discovery returned no chapter hrefs")
-	}
 	output, _ := flags.GetString("out")
 	asJSON, _ := flags.GetBool("json")
 	overrides := Overrides{}
@@ -133,30 +135,74 @@ func runInfo(ctx context.Context, seriesURL string, flags *pflag.FlagSet, stdout
 	if err != nil {
 		return err
 	}
-	done, err := store.ReadDone(config.OutputRoot, series)
-	if err != nil {
-		return err
-	}
-	doneSet := make(map[float64]bool, len(done))
-	for _, chapter := range done {
-		doneSet[chapter] = true
-	}
-	info := SeriesInfo{Series: series, SeriesURL: seriesURL, Chapters: make([]ChapterInfo, 0, len(chapters))}
-	for _, chapter := range chapters {
-		info.Chapters = append(info.Chapters, ChapterInfo{
-			Display: chapter.Display,
-			Number:  chapter.Number,
-			URL:     chapter.URL,
-			Done:    doneSet[chapter.Number],
-		})
-		if doneSet[chapter.Number] {
-			info.DoneCount++
+	offline, _ := flags.GetBool("offline")
+	includeVolumes, _ := flags.GetBool("volumes")
+
+	var info SeriesInfo
+	if offline {
+		info, err = localSeriesInfo(config.OutputRoot, series, seriesURL, includeVolumes)
+		if err != nil {
+			return err
+		}
+	} else {
+		client := dependencies.newKomikuClient(0)
+		chapters, discoverErr := client.Discover(ctx, seriesURL)
+		if discoverErr != nil {
+			return fmt.Errorf("discover chapters: %w", discoverErr)
+		}
+		if len(chapters) == 0 {
+			return errors.New("series discovery returned no chapter hrefs")
+		}
+		done, doneErr := store.ReadDone(config.OutputRoot, series)
+		if doneErr != nil {
+			return doneErr
+		}
+		doneSet := make(map[float64]bool, len(done))
+		for _, chapter := range done {
+			doneSet[chapter] = true
+		}
+		info = SeriesInfo{Series: series, SeriesURL: seriesURL, Chapters: make([]ChapterInfo, 0, len(chapters))}
+		if cover, ok := existingCover(filepath.Join(config.OutputRoot, series)); ok {
+			info.Cover = cover
+		}
+		for _, chapter := range chapters {
+			info.Chapters = append(info.Chapters, ChapterInfo{
+				Display: chapter.Display,
+				Number:  chapter.Number,
+				URL:     chapter.URL,
+				Done:    doneSet[chapter.Number],
+			})
+			if doneSet[chapter.Number] {
+				info.DoneCount++
+			}
+		}
+		volumeSourceName, _ := flags.GetString("volume-source")
+		if includeVolumes {
+			seriesStore, storeErr := store.Open(config.OutputRoot, series)
+			if storeErr != nil {
+				return storeErr
+			}
+			volumeSource, sourceErr := komiku.ParseVolumeSource(volumeSourceName)
+			if sourceErr != nil {
+				return sourceErr
+			}
+			mapping, mapErr := LoadVolumeMappingFrom(ctx, client, seriesStore.Dir(), series, chapters, volumeSource, flags.Changed("volume-source"))
+			if mapErr != nil {
+				// The chapter list is still useful without a mapping, and the pack
+				// command can fall back to a flat run, so keep the report.
+				info.VolumeError = mapErr.Error()
+			} else {
+				info.Volumes = mapping
+			}
 		}
 	}
 	if asJSON {
 		return json.NewEncoder(stdout).Encode(info)
 	}
 	fmt.Fprintf(stdout, "%s  chapters=%d done=%d\n", info.Series, len(info.Chapters), info.DoneCount)
+	if info.VolumeError != "" {
+		fmt.Fprintf(stdout, "warning: volume mapping unavailable: %s\n", info.VolumeError)
+	}
 	for _, chapter := range info.Chapters {
 		marker := "[ ]"
 		if chapter.Done {

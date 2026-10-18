@@ -33,6 +33,8 @@ id_ed25519*
 **/.state.json
 **/.pack.json
 **/.pack.json.lock
+**/.volumes.json
+**/.reader/
 **/run-*.log
 *.cbz
 *.part
@@ -43,6 +45,16 @@ id_ed25519*
 *.test
 *.out
 coverage.*
+
+# Covers saved into downloaded series directories (output_root is often ".")
+/*/cover.jpg
+/*/cover.jpeg
+/*/cover.png
+/*/cover.webp
+
+# Python test caches
+**/__pycache__/
+*.pyc
 
 # Editor and OS files
 .DS_Store

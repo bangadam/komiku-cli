@@ -244,9 +244,20 @@ func RecordPackManifest(seriesDir, series, seriesURL, provenance string, mapping
 	for _, chapter := range manifest.Chapters {
 		chapterByKey[manifestChapterKey(chapter.URL, chapter.RawID, chapter.Number)] = chapter
 	}
+	wholePresent := make(map[int]bool, len(jobs))
+	for _, job := range jobs {
+		if job.Chapter.Number > 0 && job.Chapter.Number == math.Trunc(job.Chapter.Number) {
+			wholePresent[int(job.Chapter.Number)] = true
+		}
+	}
 	for _, job := range jobs {
 		requiredVolume := requiredChapterVolume(job.Chapter.Number, mappings)
 		if requiredVolume == 0 || job.Volume != requiredVolume {
+			continue
+		}
+		// A fractional chapter that merely supplements an existing whole
+		// chapter (2.5 next to 2) is an extra, not part of the volume.
+		if job.Chapter.Number != math.Trunc(job.Chapter.Number) && wholePresent[int(math.Trunc(job.Chapter.Number))] {
 			continue
 		}
 		key := manifestChapterKey(job.Chapter.URL, job.Chapter.RawID, job.Chapter.Number)
@@ -299,7 +310,7 @@ func RecordPackManifest(seriesDir, series, seriesURL, provenance string, mapping
 // RecordRecoveredPackManifest persists verified Wikipedia mappings against local legacy
 // chapter directories without inventing Komiku URL or raw-ID provenance.
 func RecordRecoveredPackManifest(seriesDir, series string, mappings []komiku.Volume, sources []PackChapterSource) error {
-	transaction, err := prepareRecoveredPackManifest(seriesDir, series, mappings, sources)
+	transaction, err := prepareRecoveredPackManifestWithProvenance(seriesDir, series, "wikipedia-recovery", mappings, sources)
 	if err != nil {
 		return err
 	}
@@ -318,6 +329,10 @@ type recoveredManifestTransaction struct {
 }
 
 func prepareRecoveredPackManifest(seriesDir, series string, mappings []komiku.Volume, sources []PackChapterSource) (*recoveredManifestTransaction, error) {
+	return prepareRecoveredPackManifestWithProvenance(seriesDir, series, "wikipedia-recovery", mappings, sources)
+}
+
+func prepareRecoveredPackManifestWithProvenance(seriesDir, series, provenance string, mappings []komiku.Volume, sources []PackChapterSource) (*recoveredManifestTransaction, error) {
 	root, err := canonicalSeriesRoot(seriesDir)
 	if err != nil {
 		return nil, err
@@ -344,7 +359,7 @@ func prepareRecoveredPackManifest(seriesDir, series string, mappings []komiku.Vo
 		mappingByVolume[mapping.Volume] = mapping
 	}
 	for _, mapping := range mappings {
-		incoming := PackManifestMapping{Volume: mapping.Volume, Start: mapping.Start, End: mapping.End, Provenance: "wikipedia-recovery"}
+		incoming := PackManifestMapping{Volume: mapping.Volume, Start: mapping.Start, End: mapping.End, Provenance: provenance}
 		if existing, exists := mappingByVolume[mapping.Volume]; exists {
 			if existing.Volume != incoming.Volume || existing.Start != incoming.Start || existing.End != incoming.End {
 				transaction.Abort()
@@ -355,13 +370,21 @@ func prepareRecoveredPackManifest(seriesDir, series string, mappings []komiku.Vo
 		mappingByVolume[mapping.Volume] = incoming
 	}
 	chapterByKey := make(map[string]PackManifestChapter, len(manifest.Chapters)+len(sources))
+	manifestNumbers := make(map[float64]bool, len(manifest.Chapters))
 	for _, chapter := range manifest.Chapters {
 		chapterByKey[manifestChapterKey(chapter.URL, chapter.RawID, chapter.Number)] = chapter
+		manifestNumbers[chapter.Number] = true
 	}
 	for _, source := range sources {
 		if !source.Complete || source.ExpectedPages <= 0 || source.Volume <= 0 || source.Chapter.URL != "" || source.Chapter.RawID != "" {
 			transaction.Abort()
 			return nil, fmt.Errorf("recovered chapter %s lacks trusted local completion metadata", source.Chapter.Display)
+		}
+		// A chapter already recorded from a Komiku download keeps its original
+		// identity; the local source is only added for chapters the manifest
+		// does not know yet.
+		if manifestNumbers[source.Chapter.Number] {
+			continue
 		}
 		relative, pages, err := validatePackSource(root, source.Dir)
 		if err != nil {
@@ -517,7 +540,14 @@ func canonicalSeriesRoot(seriesDir string) (string, error) {
 	if err != nil {
 		return "", fmt.Errorf("resolve series directory: %w", err)
 	}
-	return filepath.Clean(root), nil
+	// Always hand back an absolute root: source paths reach this code either
+	// relative to the series root or relative to the process working
+	// directory, and only an absolute root lets filepath.Rel reconcile them.
+	absolute, err := filepath.Abs(root)
+	if err != nil {
+		return "", fmt.Errorf("resolve series directory: %w", err)
+	}
+	return filepath.Clean(absolute), nil
 }
 
 func lstatRealRootPath(root *os.Root, relative string) (os.FileInfo, error) {
@@ -641,7 +671,27 @@ func sourceRelativeToRoot(root, source string) (string, error) {
 			return "", fmt.Errorf("resolve source directory: %w", err)
 		}
 	} else {
-		relative = filepath.Clean(filepath.FromSlash(source))
+		candidate := filepath.Clean(filepath.FromSlash(source))
+		// Sources arrive either as series-root-relative paths ("chapter-003")
+		// or as paths relative to the process working directory when the
+		// configured output root is itself relative ("versus/chapter-003").
+		// Prefer the interpretation that actually exists under root.
+		if _, err := os.Lstat(filepath.Join(root, candidate)); err == nil {
+			relative = candidate
+		} else if workingDir, wdErr := os.Getwd(); wdErr == nil {
+			absolute := filepath.Join(workingDir, candidate)
+			if resolved, resolveErr := filepath.EvalSymlinks(absolute); resolveErr == nil {
+				if rel, relErr := filepath.Rel(root, resolved); relErr == nil {
+					relative = rel
+				} else {
+					relative = candidate
+				}
+			} else {
+				relative = candidate
+			}
+		} else {
+			relative = candidate
+		}
 	}
 	if relative == "." || relative == ".." || filepath.IsAbs(relative) || strings.HasPrefix(relative, ".."+string(filepath.Separator)) || relative != filepath.Clean(relative) {
 		return "", fmt.Errorf("source directory escapes series root: %s", source)
@@ -878,29 +928,32 @@ func validatePackManifest(manifest PackManifest) error {
 			return fmt.Errorf("pack manifest volumes %02d and %02d overlap", rows[index-1].Volume, mapping.Volume)
 		}
 	}
-	seenNumbers := make(map[int]bool, len(manifest.Chapters))
+	seenNumbers := make(map[float64]bool, len(manifest.Chapters))
 	seenSources := make(map[string]bool, len(manifest.Chapters))
 	for _, chapter := range manifest.Chapters {
 		if !chapter.Completed {
 			return fmt.Errorf("pack manifest chapter %q is not completed", chapter.Display)
 		}
-		number, err := strconv.Atoi(chapter.Display)
-		if err != nil || number <= 0 || float64(number) != chapter.Number {
-			return fmt.Errorf("pack manifest chapter %q lacks an exact integer identity", chapter.Display)
+		// Chapter numbers are positive and may be fractional (1.1, 2.5) for
+		// split releases; the display label must still parse to the same value.
+		number, err := strconv.ParseFloat(chapter.Display, 64)
+		if err != nil || number <= 0 || number != chapter.Number {
+			return fmt.Errorf("pack manifest chapter %q has an inconsistent number", chapter.Display)
 		}
 		if seenNumbers[number] {
-			return fmt.Errorf("pack manifest chapter %d is duplicated", number)
+			return fmt.Errorf("pack manifest chapter %q is duplicated", chapter.Display)
 		}
 		seenNumbers[number] = true
+		whole := int(number)
 		mapping, exists := mappingByVolume[chapter.Volume]
-		if !exists || number < mapping.Start || number > mapping.End {
-			return fmt.Errorf("pack manifest chapter %d does not belong to declared volume %02d", number, chapter.Volume)
+		if !exists || whole < mapping.Start || whole > mapping.End {
+			return fmt.Errorf("pack manifest chapter %q does not belong to declared volume %02d", chapter.Display, chapter.Volume)
 		}
 		if chapter.ExpectedPages <= 0 || chapter.ExpectedPages > store.MaxChapterPages {
-			return fmt.Errorf("pack manifest chapter %d has invalid expected page count", number)
+			return fmt.Errorf("pack manifest chapter %q has invalid expected page count", chapter.Display)
 		}
 		if err := validateManifestSourcePath(chapter.SourceDir); err != nil {
-			return fmt.Errorf("pack manifest chapter %d source: %w", number, err)
+			return fmt.Errorf("pack manifest chapter %q source: %w", chapter.Display, err)
 		}
 		if seenSources[chapter.SourceDir] {
 			return fmt.Errorf("pack manifest source %s is claimed by multiple chapters", chapter.SourceDir)
@@ -916,10 +969,10 @@ func validatePackManifest(manifest PackManifest) error {
 			}
 		case "recovered-local":
 			if chapter.URL != "" || chapter.RawID != "" {
-				return fmt.Errorf("recovered local chapter %d must not claim Komiku identity", number)
+				return fmt.Errorf("recovered local chapter %q must not claim Komiku identity", chapter.Display)
 			}
 		default:
-			return fmt.Errorf("pack manifest chapter %d has invalid identity provenance %q", number, chapter.IdentityProvenance)
+			return fmt.Errorf("pack manifest chapter %q has invalid identity provenance %q", chapter.Display, chapter.IdentityProvenance)
 		}
 	}
 	return nil

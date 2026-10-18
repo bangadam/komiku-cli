@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"html"
 	"io"
+	"net"
 	"net/http"
 	"net/url"
 	"path"
@@ -145,15 +146,39 @@ func NewClient(httpClient *http.Client, imageDelay time.Duration) *Client {
 	}
 }
 
+// fetchHTMLRetries bounds retries for transient transport failures. The image
+// CDN and the HTML host both reset connections under load, and a page fetch is
+// idempotent, so retrying is safe.
+const fetchHTMLRetries = 2
+
 func (c *Client) fetchHTML(ctx context.Context, target string) ([]byte, error) {
-	data, status, statusText, err := c.fetchPage(ctx, target)
-	if err != nil {
-		return nil, err
+	var lastErr error
+	for attempt := 0; attempt <= fetchHTMLRetries; attempt++ {
+		if attempt > 0 {
+			if err := c.sleep()(ctx, time.Duration(attempt)*500*time.Millisecond); err != nil {
+				return nil, err
+			}
+		}
+		data, status, statusText, err := c.fetchPage(ctx, target)
+		if err == nil && status >= 200 && status <= 299 {
+			return data, nil
+		}
+		if err == nil {
+			// A definite HTTP status is not transient.
+			return nil, fmt.Errorf("GET %s: %s", target, statusText)
+		}
+		if ctx.Err() != nil {
+			return nil, ctx.Err()
+		}
+		// A timeout means the host is throttling or unreachable. Retrying it
+		// only multiplies the wait, so fail fast and let the caller report it.
+		var netErr net.Error
+		if errors.As(err, &netErr) && netErr.Timeout() {
+			return nil, err
+		}
+		lastErr = err
 	}
-	if status < 200 || status > 299 {
-		return nil, fmt.Errorf("GET %s: %s", target, statusText)
-	}
-	return data, nil
+	return nil, lastErr
 }
 
 // fetchPage performs a GET and returns the body with the HTTP status, so

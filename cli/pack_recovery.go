@@ -46,6 +46,12 @@ type legacyState struct {
 }
 
 func prepareWikipediaRecovery(ctx context.Context, seriesDir, titleOverride, volumeExpression string, preset packer.Preset, httpClient *http.Client, recoverComplete bool) (wikipediaRecovery, error) {
+	return prepareVolumeRecovery(ctx, seriesDir, titleOverride, volumeExpression, preset, httpClient, recoverComplete, komiku.VolumeSourceMangaDex)
+}
+
+// prepareVolumeRecovery rebuilds a volume mapping for a flat download from the
+// selected provider (MangaDex by default) and plans the pack.
+func prepareVolumeRecovery(ctx context.Context, seriesDir, titleOverride, volumeExpression string, preset packer.Preset, httpClient *http.Client, recoverComplete bool, source komiku.VolumeSource) (wikipediaRecovery, error) {
 	root, err := canonicalSeriesRoot(seriesDir)
 	if err != nil {
 		return wikipediaRecovery{}, err
@@ -81,14 +87,32 @@ func prepareWikipediaRecovery(ctx context.Context, seriesDir, titleOverride, vol
 	}
 
 	client := komiku.NewClient(redirectDisabledClient(httpClient), 0)
-	mappings, err := client.FetchWikipediaDisplayVolumesStrict(ctx, title)
-	if err != nil {
-		return wikipediaRecovery{}, err
+	maxChapter := 0
+	for _, chapter := range local {
+		if whole := int(chapter.Number); whole > maxChapter {
+			maxChapter = whole
+		}
 	}
+	var cache komiku.VolumeCache
+	if source == komiku.VolumeSourceWikipedia {
+		// --recover-wikipedia keeps its documented strict contract: exactly
+		// one Wikipedia page fetch, no search resolution, no fallbacks.
+		mappings, err := client.FetchWikipediaDisplayVolumesStrict(ctx, title)
+		if err != nil {
+			return wikipediaRecovery{}, err
+		}
+		cache = komiku.VolumeCache{Source: wikipediaChapterListURL(title), Volumes: mappings}
+	} else {
+		cache, err = client.FetchVolumeMappingFrom(ctx, title, maxChapter, source)
+		if err != nil {
+			return wikipediaRecovery{}, err
+		}
+	}
+	mappings := cache.Volumes
 	if len(mappings) == 0 {
-		return wikipediaRecovery{}, fmt.Errorf("Wikipedia has no exact volume rows for %q", title)
+		return wikipediaRecovery{}, fmt.Errorf("%w for %q; no volume mapping is available, so the chapters cannot be grouped", komiku.ErrNoWikipediaVolumeRows, title)
 	}
-	sourceURL := wikipediaChapterListURL(title)
+	sourceURL := cache.Source
 	selected, ignored, err := selectRecoveryMappings(mappings, local, done, volumeExpression, recoverComplete)
 	if err != nil {
 		return wikipediaRecovery{}, err
@@ -313,11 +337,7 @@ func selectRecoveryMappings(mappings []komiku.Volume, local map[float64]legacyFl
 		}
 		ignored := make([]string, 0)
 		for number := range local {
-			volume := 0
-			if number == math.Trunc(number) && number > 0 && number <= maxPackChapterNumber {
-				volume = volumeByChapter[int(number)]
-			}
-			if volume == 0 || !wanted[volume] {
+			if !recoveredChapterIsUsed(number, local, volumeByChapter, wanted) {
 				ignored = append(ignored, formatRecoveredNumber(number))
 			}
 		}
@@ -378,11 +398,7 @@ func selectRecoveryMappings(mappings []komiku.Volume, local map[float64]legacyFl
 		}
 		ignored := make([]string, 0)
 		for number := range local {
-			volume := 0
-			if number == math.Trunc(number) && number > 0 && number <= maxPackChapterNumber {
-				volume = volumeByChapter[int(number)]
-			}
-			if volume == 0 || !wanted[volume] {
+			if !recoveredChapterIsUsed(number, local, volumeByChapter, wanted) {
 				ignored = append(ignored, formatRecoveredNumber(number))
 			}
 		}
@@ -408,28 +424,89 @@ func selectRecoveryMappings(mappings []komiku.Volume, local map[float64]legacyFl
 	return selected, nil, nil
 }
 
+// fractionalPartsFor returns the local chapters that represent a whole chapter
+// number. Komiku splits some chapters into fractional parts (1.1, 1.2), so a
+// volume declared as 1-4 may only have 1.1/1.2 on disk instead of chapter-001.
+func fractionalPartsFor(local map[float64]legacyFlatChapter, whole int) []legacyFlatChapter {
+	parts := make([]legacyFlatChapter, 0, 2)
+	for number, chapter := range local {
+		if number > float64(whole) && number < float64(whole+1) {
+			parts = append(parts, chapter)
+		}
+	}
+	sort.Slice(parts, func(i, j int) bool { return parts[i].Number < parts[j].Number })
+	return parts
+}
+
+// recoveredChapterIsUsed reports whether a local chapter is consumed by the
+// selected volumes. A whole chapter is used when its volume is selected. A
+// fractional part is used only when it stands in for a missing whole chapter
+// (Komiku splits chapter 1 into 1.1 and 1.2); when the whole chapter exists,
+// the fractional part is an extra and stays out of the archive.
+func recoveredChapterIsUsed(number float64, local map[float64]legacyFlatChapter, volumeByChapter map[int]int, wanted map[int]bool) bool {
+	if number <= 0 {
+		return false
+	}
+	whole := int(math.Trunc(number))
+	if whole <= 0 || whole > maxPackChapterNumber {
+		return false
+	}
+	volume := volumeByChapter[whole]
+	if volume == 0 || !wanted[volume] {
+		return false
+	}
+	if number == math.Trunc(number) {
+		return true
+	}
+	_, wholeExists := local[float64(whole)]
+	return !wholeExists
+}
+
 func buildRecoverySources(root string, mappings []komiku.Volume, local map[float64]legacyFlatChapter, done map[float64]bool) ([]PackChapterSource, error) {
 	sources := make([]PackChapterSource, 0)
 	for _, mapping := range mappings {
 		for number := mapping.Start; number <= mapping.End; number++ {
 			chapter, exists := local[float64(number)]
-			if !exists {
+			if exists {
+				if !done[float64(number)] {
+					return nil, fmt.Errorf("volume %02d is partial: chapter %d is not DONE in .state.json", mapping.Volume, number)
+				}
+				relative, pages, err := validatePackSource(root, chapter.SourceDir)
+				if err != nil {
+					return nil, fmt.Errorf("volume %02d chapter %d: %w", mapping.Volume, number, err)
+				}
+				sources = append(sources, PackChapterSource{
+					Chapter:       komiku.Chapter{Display: strconv.Itoa(number), Number: float64(number)},
+					Volume:        mapping.Volume,
+					Dir:           relative,
+					ExpectedPages: pages,
+					Complete:      true,
+				})
+				continue
+			}
+
+			// No canonical folder: accept the fractional parts of this chapter
+			// when every part is present and DONE.
+			parts := fractionalPartsFor(local, number)
+			if len(parts) == 0 {
 				return nil, fmt.Errorf("volume %02d is partial: canonical folder chapter-%s is missing", mapping.Volume, store.FormatChapter(strconv.Itoa(number)))
 			}
-			if !done[float64(number)] {
-				return nil, fmt.Errorf("volume %02d is partial: chapter %d is not DONE in .state.json", mapping.Volume, number)
+			for _, part := range parts {
+				if !done[part.Number] {
+					return nil, fmt.Errorf("volume %02d is partial: chapter %s is not DONE in .state.json", mapping.Volume, part.Display)
+				}
+				relative, pages, err := validatePackSource(root, part.SourceDir)
+				if err != nil {
+					return nil, fmt.Errorf("volume %02d chapter %s: %w", mapping.Volume, part.Display, err)
+				}
+				sources = append(sources, PackChapterSource{
+					Chapter:       komiku.Chapter{Display: part.Display, Number: part.Number},
+					Volume:        mapping.Volume,
+					Dir:           relative,
+					ExpectedPages: pages,
+					Complete:      true,
+				})
 			}
-			relative, pages, err := validatePackSource(root, chapter.SourceDir)
-			if err != nil {
-				return nil, fmt.Errorf("volume %02d chapter %d: %w", mapping.Volume, number, err)
-			}
-			sources = append(sources, PackChapterSource{
-				Chapter:       komiku.Chapter{Display: strconv.Itoa(number), Number: float64(number)},
-				Volume:        mapping.Volume,
-				Dir:           relative,
-				ExpectedPages: pages,
-				Complete:      true,
-			})
 		}
 	}
 	return sources, nil

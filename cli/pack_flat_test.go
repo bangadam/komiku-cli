@@ -68,6 +68,31 @@ func TestFlatPackPacksContiguousChaptersOfflineWithoutManifest(t *testing.T) {
 	}
 }
 
+func TestFlatPackIncludesFractionalExtras(t *testing.T) {
+	seriesDir := newFlatSeries(t, 1, 2)
+	writeManifestTestImage(t, filepath.Join(seriesDir, "chapter-001.5"), "001.jpg")
+	client := offlineHTTPClient(t)
+	var stdout, stderr bytes.Buffer
+	code := Main(context.Background(), []string{"pack", seriesDir, "--flat", "--series", "S", "--preset", "raw"}, &stdout, &stderr, Dependencies{HTTP: client})
+	if code != 0 {
+		t.Fatalf("code=%d stdout=%s stderr=%s", code, stdout.String(), stderr.String())
+	}
+	archive := filepath.Join(seriesDir, "S Chapters 1-2.cbz")
+	reader, err := zip.OpenReader(archive)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer reader.Close()
+	entries := make([]string, 0, len(reader.File))
+	for _, file := range reader.File {
+		entries = append(entries, file.Name)
+	}
+	want := []string{"Chapter 001/001.jpg", "Chapter 001.5/001.jpg", "Chapter 002/001.jpg"}
+	if strings.Join(entries, ",") != strings.Join(want, ",") {
+		t.Fatalf("archive entries=%v, want %v", entries, want)
+	}
+}
+
 func TestFlatPackDefaultsSeriesNameToDirectory(t *testing.T) {
 	seriesDir := newFlatSeries(t, 5)
 	client := offlineHTTPClient(t)
@@ -81,6 +106,29 @@ func TestFlatPackDefaultsSeriesNameToDirectory(t *testing.T) {
 	}
 }
 
+func TestFlatPackToleratesMissingChapters(t *testing.T) {
+	seriesDir := newFlatSeries(t, 1, 3)
+	client := offlineHTTPClient(t)
+	var stdout, stderr bytes.Buffer
+	code := Main(context.Background(), []string{"pack", seriesDir, "--flat", "--preset", "raw"}, &stdout, &stderr, Dependencies{HTTP: client})
+	if code != 0 {
+		t.Fatalf("code=%d stderr=%s", code, stderr.String())
+	}
+	reader, err := zip.OpenReader(filepath.Join(seriesDir, "flat-series Chapters 1-3.cbz"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer reader.Close()
+	entries := make([]string, 0, len(reader.File))
+	for _, file := range reader.File {
+		entries = append(entries, file.Name)
+	}
+	want := []string{"Chapter 001/001.jpg", "Chapter 003/001.jpg"}
+	if strings.Join(entries, ",") != strings.Join(want, ",") {
+		t.Fatalf("archive entries=%v, want %v", entries, want)
+	}
+}
+
 func TestFlatPackRejectsBrokenLocalLayouts(t *testing.T) {
 	tests := []struct {
 		name    string
@@ -88,22 +136,6 @@ func TestFlatPackRejectsBrokenLocalLayouts(t *testing.T) {
 		args    []string
 		want    string
 	}{
-		{
-			name:    "chapter gap",
-			prepare: func(t *testing.T) string { return newFlatSeries(t, 1, 3) },
-			args:    []string{"--flat"},
-			want:    "not contiguous",
-		},
-		{
-			name: "decimal chapter",
-			prepare: func(t *testing.T) string {
-				dir := newFlatSeries(t, 1)
-				writeManifestTestImage(t, filepath.Join(dir, "chapter-001.5"), "001.jpg")
-				return dir
-			},
-			args: []string{"--flat"},
-			want: "requires integer chapters",
-		},
 		{
 			name: "sparse pages",
 			prepare: func(t *testing.T) string {
@@ -183,5 +215,25 @@ func TestFlatPackRejectsBrokenLocalLayouts(t *testing.T) {
 				t.Fatalf("failed flat pack wrote archives: %#v", archives)
 			}
 		})
+	}
+}
+
+func TestRecoveryFallsBackToFlatPackWhenWikipediaHasNoVolumes(t *testing.T) {
+	seriesDir := newLegacySeries(t, []float64{1, 2}, []float64{1, 2})
+	emptyBody := `<html><body>no volume table here</body></html>`
+	client := &http.Client{Transport: roundTripFunc(func(request *http.Request) (*http.Response, error) {
+		return &http.Response{StatusCode: http.StatusOK, Status: "200 OK", Header: make(http.Header), Body: io.NopCloser(strings.NewReader(emptyBody)), Request: request}, nil
+	})}
+	var stdout, stderr bytes.Buffer
+	code := Main(context.Background(), []string{"pack", seriesDir, "--recover-wikipedia", "--preset", "raw"}, &stdout, &stderr, Dependencies{HTTP: client})
+	if code != 0 {
+		t.Fatalf("code=%d stdout=%s stderr=%s", code, stdout.String(), stderr.String())
+	}
+	if !strings.Contains(stdout.String(), "flat chapter range") {
+		t.Fatalf("fallback note missing: %q", stdout.String())
+	}
+	archive := filepath.Join(seriesDir, "sakamoto-days Chapters 1-2.cbz")
+	if _, err := os.Stat(archive); err != nil {
+		t.Fatal(err)
 	}
 }

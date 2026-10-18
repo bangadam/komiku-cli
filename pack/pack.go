@@ -206,7 +206,7 @@ func PackVolume(ctx context.Context, volume Volume, preset Preset) (Result, erro
 				_ = archive.Close()
 				return Result{}, fmt.Errorf("pack interrupted: %w", err)
 			}
-			base := fmt.Sprintf("Chapter %03d/%03d", int(chapter.Number), source.number)
+			base := "Chapter " + store.FormatChapter(chapter.Display) + fmt.Sprintf("/%03d", source.number)
 			name := base + source.ext
 			if preset == Raw {
 				err = addStoredImage(sourceRoot, zipper, name, source)
@@ -282,17 +282,17 @@ func prepareChapters(root *os.Root, chapters []Chapter, preset Preset) ([]prepar
 		return nil, errors.New("no discovered chapters mapped to volume")
 	}
 	prepared := make([]preparedChapter, 0, len(chapters))
-	seen := make(map[int]bool, len(chapters))
+	seen := make(map[string]bool, len(chapters))
 	var totalBytes int64
 	for _, chapter := range chapters {
-		number, err := strconv.Atoi(chapter.Display)
-		if err != nil || number <= 0 || float64(number) != chapter.Number {
-			return nil, fmt.Errorf("invalid integer chapter %q", chapter.Display)
+		if chapter.Display == "" || chapter.Number <= 0 || chapter.Number > 1e7 {
+			return nil, fmt.Errorf("invalid chapter %q", chapter.Display)
 		}
-		if seen[number] {
-			return nil, fmt.Errorf("duplicate chapter entry Chapter %03d", number)
+		// ponytail: loose display check; strict canonical check happens in callers with manifests
+		if seen[chapter.Display] {
+			return nil, fmt.Errorf("duplicate chapter entry %q", chapter.Display)
 		}
-		seen[number] = true
+		seen[chapter.Display] = true
 		pages, bytes, err := chapterPages(root, chapter, preset)
 		if err != nil {
 			return nil, fmt.Errorf("chapter %s: %w", chapter.Display, err)

@@ -165,7 +165,6 @@ func TestDownloadMissingFillsGapsOnly(t *testing.T) {
 	}
 }
 
-
 func TestInfoCommandMarksDoneChapters(t *testing.T) {
 	var imageHits int
 	server := chapterListServer(t, &imageHits)

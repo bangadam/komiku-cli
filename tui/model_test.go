@@ -200,12 +200,8 @@ func TestTabCyclesNavMenusAndLoadsLists(t *testing.T) {
 		t.Fatalf("tab from Settings did not return to focused Search: nav=%d screen=%v search-focused=%v settings-focused=%v", current.nav, current.screen, current.input.Focused(), current.outputInput.Focused())
 	}
 	current, _ = updateModel(t, current, tea.KeyMsg{Type: tea.KeyShiftTab})
-	if current.nav != 3 || current.screen != settingsScreen || !current.outputInput.Focused() {
-		t.Fatalf("shift tab from Search did not return to Settings: nav=%d screen=%v focused=%v", current.nav, current.screen, current.outputInput.Focused())
-	}
-	current, _ = updateModel(t, current, tea.KeyMsg{Type: tea.KeyEsc})
-	if current.nav != 0 || current.screen != searchScreen {
-		t.Fatalf("settings esc did not return to Search: nav=%d screen=%v", current.nav, current.screen)
+	if current.nav != 3 || current.screen != settingsScreen {
+		t.Fatalf("shift tab from Search did not return to Settings: nav=%d screen=%v", current.nav, current.screen)
 	}
 }
 
@@ -730,7 +726,7 @@ func TestCompleteWikipediaHeaderSelectionEnablesDonePack(t *testing.T) {
 	}
 }
 
-func TestIncompleteWikipediaSelectionsStayFlatAndExplicitFlatWins(t *testing.T) {
+func TestIncompleteWikipediaSelectionsStayFlatAndPackAsChapterRun(t *testing.T) {
 	chapters := []komiku.Chapter{
 		{RawID: "1", Display: "1", Number: 1, URL: "one"},
 		{RawID: "2", Display: "2", Number: 2, URL: "two"},
@@ -740,11 +736,10 @@ func TestIncompleteWikipediaSelectionsStayFlatAndExplicitFlatWins(t *testing.T) 
 		name         string
 		selected     map[string]bool
 		explicitFlat bool
-		wantReason   string
 	}{
-		{"partial", map[string]bool{"one": true}, false, "volume 01 requires selected chapter 2"},
-		{"mixed extra", map[string]bool{"one": true, "two": true, "extra": true}, false, "selected chapter 2.5 is an extra or non-integer chapter"},
-		{"explicit flat full volume", map[string]bool{"one": true, "two": true}, true, "explicit flat layout was selected with r"},
+		{"partial", map[string]bool{"one": true}, false},
+		{"mixed extra", map[string]bool{"one": true, "two": true, "extra": true}, false},
+		{"explicit flat full volume", map[string]bool{"one": true, "two": true}, true},
 	}
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
@@ -765,10 +760,57 @@ func TestIncompleteWikipediaSelectionsStayFlatAndExplicitFlatWins(t *testing.T) 
 					t.Fatalf("flat selection gained logical assignment: %+v", service.startedJobs)
 				}
 			}
-			if !strings.Contains(current.packUnavailableReason, test.wantReason) {
-				t.Fatalf("pack reason=%q, want %q", current.packUnavailableReason, test.wantReason)
+			if current.packUnavailableReason != "" {
+				t.Fatalf("flat run no longer needs a pack reason: %q", current.packUnavailableReason)
 			}
 		})
+	}
+}
+
+func TestDoneFlatRunWithFractionalExtrasPacksInline(t *testing.T) {
+	chapters := []komiku.Chapter{
+		{RawID: "1", Display: "1", Number: 1, URL: "one"},
+		{RawID: "1.1", Display: "1.1", Number: 1.1, URL: "extra-one"},
+		{RawID: "2", Display: "2", Number: 2, URL: "two"},
+	}
+	seriesStore, err := store.Open(t.TempDir(), "series")
+	if err != nil {
+		t.Fatal(err)
+	}
+	results := make([]cli.Result, 0, len(chapters))
+	for _, chapter := range chapters {
+		dir, err := seriesStore.ChapterDir(chapter.Display, "", 1, true)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(filepath.Join(dir, "001.jpg"), append([]byte{0xff, 0xd8}, make([]byte, 32)...), 0o644); err != nil {
+			t.Fatal(err)
+		}
+		results = append(results, cli.Result{Chapter: chapter, Status: cli.Done, Success: 1, Total: 1, SourceDir: dir})
+	}
+	events := make(chan cli.Event)
+	close(events)
+	service := &fakeBackend{
+		batch:     &fakeBatch{events: events, summary: cli.Summary{Results: results, Counts: map[cli.Status]int{cli.Done: len(results)}}},
+		packStore: seriesStore,
+	}
+	current := newModel(service, packer.Raw, true, nil, time.Now)
+	current.screen, current.seriesURL, current.chapters = chaptersScreen, "http://localhost/manga/series/", chapters
+	for _, chapter := range chapters {
+		current.selected[chapter.URL] = true
+	}
+	current, cmd := updateModel(t, current, tea.KeyMsg{Type: tea.KeyEnter})
+	current, _ = updateModel(t, current, cmd())
+
+	if current.packPlan.DisabledReason != "" || len(current.packPlan.Skipped) != 0 || len(current.packPlan.Volumes) != 1 {
+		t.Fatalf("flat fractional run disabled packing: plan=%+v", current.packPlan)
+	}
+	volume := current.packPlan.Volumes[0]
+	if len(volume.Chapters) != 3 || volume.Chapters[1].Display != "1.1" {
+		t.Fatalf("fractional extra not packed inline: %+v", volume.Chapters)
+	}
+	if !strings.Contains(current.View(), "> p Pack 1 volume(s)") || strings.Contains(current.View(), "[PACK DISABLED]") {
+		t.Fatalf("Done screen still shows a disabled pack:\n%s", current.View())
 	}
 }
 func TestWikipediaVolumeNavigationUsesRenderedControlOrderAndSkipsExtrasHeading(t *testing.T) {
@@ -1256,4 +1298,10 @@ func TestRichAsyncOperationsRestartSpinner(t *testing.T) {
 	if next == nil {
 		t.Fatal("volume spinner tick did not reschedule")
 	}
+}
+
+func switchNavModel(t *testing.T, current model, index int) model {
+	t.Helper()
+	updated, _ := current.switchNav(index)
+	return updated.(model)
 }

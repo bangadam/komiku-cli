@@ -73,6 +73,41 @@ func TestMainNoArgsReportsHeadlessUsageWithoutStaleTUIClaim(t *testing.T) {
 	}
 }
 
+func TestRemovedSubscriptionCommandsAreUnavailable(t *testing.T) {
+	root := NewRootCommand(io.Discard, io.Discard, Dependencies{})
+	removed := map[string]bool{"subscribe": true, "unsubscribe": true, "subs": true}
+	for _, command := range root.Commands() {
+		if removed[command.Name()] {
+			t.Fatalf("removed command %q is still registered", command.Name())
+		}
+	}
+	for _, name := range []string{"subscribe", "unsubscribe", "subs"} {
+		t.Run(name, func(t *testing.T) {
+			configPath := isolatedCLIConfig(t)
+			var stdout, stderr bytes.Buffer
+			if code := Main(context.Background(), []string{name}, &stdout, &stderr, Dependencies{ConfigPath: configPath}); code != 2 {
+				t.Fatalf("removed command exit=%d stdout=%s stderr=%s", code, stdout.String(), stderr.String())
+			}
+			if !strings.Contains(stderr.String(), "unknown command") || stdout.Len() != 0 {
+				t.Fatalf("stdout=%s stderr=%s", stdout.String(), stderr.String())
+			}
+			if _, err := os.Stat(filepath.Dir(configPath)); !os.IsNotExist(err) {
+				t.Fatalf("removed command created config data: %v", err)
+			}
+		})
+	}
+	for _, args := range [][]string{{"--help"}, {"update", "--help"}, {"library", "--help"}, {"cover", "--help"}, {"unknown"}} {
+		var stdout, stderr bytes.Buffer
+		Main(context.Background(), args, &stdout, &stderr, Dependencies{})
+		output := stdout.String() + stderr.String()
+		for _, word := range strings.Fields(strings.ToLower(output)) {
+			if strings.HasPrefix(word, "subscri") || strings.HasPrefix(word, "unsubscri") || word == "subs" || word == "subs," {
+				t.Fatalf("command %v advertises removed feature: %s", args, output)
+			}
+		}
+	}
+}
+
 func TestInvalidSeriesURLStopsBeforeNetworkAndStore(t *testing.T) {
 	var hits int
 	httpClient := &http.Client{Transport: roundTripFunc(func(*http.Request) (*http.Response, error) {

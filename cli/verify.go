@@ -32,12 +32,12 @@ type VerifyChapter struct {
 
 // VerifyReport is the offline integrity report of one series directory.
 type VerifyReport struct {
-	SeriesDir    string          `json:"series_dir"`
-	Chapters     []VerifyChapter `json:"chapters"`
-	DoneCount    int             `json:"done_count"`
-	NotInState   []string        `json:"chapters_not_in_state,omitempty"`
-	Healthy      bool            `json:"healthy"`
-	Problems     int             `json:"problems"`
+	SeriesDir  string          `json:"series_dir"`
+	Chapters   []VerifyChapter `json:"chapters"`
+	DoneCount  int             `json:"done_count"`
+	NotInState []string        `json:"chapters_not_in_state,omitempty"`
+	Healthy    bool            `json:"healthy"`
+	Problems   int             `json:"problems"`
 }
 
 func NewVerifyCommand() *cobra.Command {

@@ -8,6 +8,7 @@ import (
 	"html"
 	"net/http"
 	"net/url"
+	"os"
 	"regexp"
 	"sort"
 	"strconv"
@@ -25,7 +26,10 @@ type VolumeCache struct {
 	Volumes []Volume `json:"volumes"`
 }
 
-var errNoWikipediaVolumeRows = errors.New("Wikipedia has no usable volume grouping")
+// ErrNoWikipediaVolumeRows reports that Wikipedia has no usable volume rows
+// for a series; callers can fall back to chapter-range packing.
+var ErrNoWikipediaVolumeRows = errors.New("Wikipedia has no usable volume grouping")
+var errNoWikipediaVolumeRows = ErrNoWikipediaVolumeRows
 
 var (
 	volumeRecordPattern     = regexp.MustCompile(`(?is)VolumeNumber.{0,400}?["']?wt["']?\s*[:=]\s*["']?([0-9]+)["']?.{0,1000}?.{0,600}?\bstart\s*=\s*["']?([0-9]+)`)
@@ -582,28 +586,432 @@ func sharesSearchWord(title string, words map[string]bool) bool {
 	return false
 }
 
+// VolumeSource selects which provider supplies the chapter→volume mapping.
+type VolumeSource string
+
+const (
+	// VolumeSourceAuto tries MangaDex first, then Wikipedia, then Fandom.
+	VolumeSourceAuto VolumeSource = "auto"
+	// VolumeSourceMangaDex uses MangaDex only.
+	VolumeSourceMangaDex VolumeSource = "mangadex"
+	// VolumeSourceWikipedia uses Wikipedia only.
+	VolumeSourceWikipedia VolumeSource = "wikipedia"
+	// VolumeSourceFandom uses the community Fandom wiki only.
+	VolumeSourceFandom VolumeSource = "fandom"
+)
+
+// ParseVolumeSource validates a --volume-source value.
+func ParseVolumeSource(value string) (VolumeSource, error) {
+	switch VolumeSource(strings.ToLower(strings.TrimSpace(value))) {
+	case "", VolumeSourceAuto:
+		return VolumeSourceAuto, nil
+	case VolumeSourceMangaDex:
+		return VolumeSourceMangaDex, nil
+	case VolumeSourceWikipedia:
+		return VolumeSourceWikipedia, nil
+	case VolumeSourceFandom:
+		return VolumeSourceFandom, nil
+	default:
+		return "", fmt.Errorf("unknown volume source %q; expected auto, mangadex, wikipedia, or fandom", value)
+	}
+}
+
+// minVolumeCoverage is the fraction of the discovered chapter range a mapping
+// must reach to be accepted in auto mode. MangaDex in particular often stops
+// several volumes short, and a partial mapping silently drops later volumes.
+const minVolumeCoverage = 0.9
+
+// volumeSource is one candidate provider of a chapter→volume mapping.
+type volumeSource struct {
+	name  string
+	fetch func(context.Context) ([]Volume, string, error)
+}
+
+// FetchVolumeMapping resolves a chapter→volume mapping from MangaDex, the
+// default provider. Use FetchVolumeMappingFrom with VolumeSourceAuto to try
+// Wikipedia and Fandom as fallbacks.
 func (c *Client) FetchVolumeMapping(ctx context.Context, seriesName string, maxChapter int) (VolumeCache, error) {
+	return c.FetchVolumeMappingFrom(ctx, seriesName, maxChapter, VolumeSourceMangaDex)
+}
+
+// FetchVolumeMappingFrom resolves a chapter→volume mapping from the requested
+// provider. In auto mode a source whose mapping stops well short of the last
+// discovered chapter is rejected and the next provider is tried.
+func (c *Client) FetchVolumeMappingFrom(ctx context.Context, seriesName string, maxChapter int, source VolumeSource) (VolumeCache, error) {
 	name := strings.TrimSpace(seriesName)
 	if name == "" {
 		return VolumeCache{}, errors.New("series name is empty")
 	}
-	wikiURL := "https://en.wikipedia.org/wiki/" + url.PathEscape("List of "+name+" chapters")
-	if data, err := c.fetchHTML(ctx, wikiURL); err == nil {
-		if volumes, parseErr := ParseVolumeMapping(data, maxChapter); parseErr == nil {
-			return VolumeCache{Source: wikiURL, Volumes: volumes}, nil
+
+	attempts := make([]string, 0, 6)
+	remember := func(label string, err error) {
+		if err != nil {
+			attempts = append(attempts, fmt.Sprintf("%s: %v", label, err))
 		}
 	}
-	fandomSlug := strings.ToLower(strings.ReplaceAll(name, " ", ""))
-	fandomURL := "https://" + fandomSlug + ".fandom.com/wiki/Volumes_%26Chapters"
-	data, err := c.fetchHTML(ctx, fandomURL)
+
+	for _, candidate := range c.volumeSources(name, maxChapter, source, remember) {
+		if err := ctx.Err(); err != nil {
+			return VolumeCache{}, err
+		}
+		volumes, url, err := candidate.fetch(ctx)
+		if err != nil {
+			remember(candidate.name, err)
+			continue
+		}
+		if len(volumes) == 0 {
+			remember(candidate.name, errors.New("no volume grouping"))
+			continue
+		}
+		if err := ValidateVolumes(volumes, maxChapter); err != nil {
+			remember(candidate.name, err)
+			continue
+		}
+		if source == VolumeSourceAuto && !coversChapterRange(volumes, maxChapter) {
+			remember(candidate.name, fmt.Errorf("incomplete mapping: reaches chapter %d of %d", highestMappedChapter(volumes), maxChapter))
+			continue
+		}
+		return VolumeCache{Source: url, Volumes: volumes}, nil
+	}
+
+	if len(attempts) == 0 {
+		return VolumeCache{}, errors.New("automatic volume mapping failed: no source available")
+	}
+	return VolumeCache{}, fmt.Errorf(
+		"automatic volume mapping failed (tried %d sources): %s\ncreate/edit .volumes.json or use --ch ... --flat",
+		len(attempts),
+		strings.Join(attempts, "; "),
+	)
+}
+
+// coversChapterRange reports whether a mapping reaches far enough into the
+// discovered chapter range to be trusted in auto mode.
+func coversChapterRange(volumes []Volume, maxChapter int) bool {
+	if maxChapter <= 0 {
+		return true
+	}
+	return float64(highestMappedChapter(volumes)) >= float64(maxChapter)*minVolumeCoverage
+}
+
+func highestMappedChapter(volumes []Volume) int {
+	highest := 0
+	for _, volume := range volumes {
+		if volume.End > highest {
+			highest = volume.End
+		}
+	}
+	return highest
+}
+
+// volumeSources builds the ordered provider list for a series name and the
+// requested source selection.
+func (c *Client) volumeSources(name string, maxChapter int, source VolumeSource, remember func(string, error)) []volumeSource {
+	mangadex := volumeSource{
+		name: "MangaDex",
+		fetch: func(ctx context.Context) ([]Volume, string, error) {
+			return c.fetchMangaDexVolumes(ctx, name, maxChapter)
+		},
+	}
+	wikipedia := c.wikipediaVolumeSources(name, maxChapter, remember)
+	fandom := volumeSource{
+		name: "Fandom",
+		fetch: func(ctx context.Context) ([]Volume, string, error) {
+			return c.fetchFandomVolumes(ctx, name, maxChapter)
+		},
+	}
+
+	switch source {
+	case VolumeSourceMangaDex:
+		return []volumeSource{mangadex}
+	case VolumeSourceWikipedia:
+		return wikipedia
+	case VolumeSourceFandom:
+		return []volumeSource{fandom}
+	default:
+		ordered := make([]volumeSource, 0, len(wikipedia)+2)
+		ordered = append(ordered, mangadex)
+		ordered = append(ordered, wikipedia...)
+		ordered = append(ordered, fandom)
+		return ordered
+	}
+}
+
+// wikipediaVolumeSources builds the Wikipedia provider chain: list pages, the
+// main article, then a search fallback for noisy slugs.
+func (c *Client) wikipediaVolumeSources(name string, maxChapter int, remember func(string, error)) []volumeSource {
+	sources := make([]volumeSource, 0, 3)
+	for _, title := range []string{"List of " + name + " chapters", "List of " + name + " volumes", name} {
+		title := title
+		sources = append(sources, volumeSource{
+			name: "Wikipedia " + title,
+			fetch: func(ctx context.Context) ([]Volume, string, error) {
+				return c.fetchWikipediaVolumes(ctx, title, maxChapter)
+			},
+		})
+	}
+	sources = append(sources, volumeSource{
+		name: "Wikipedia search",
+		fetch: func(ctx context.Context) ([]Volume, string, error) {
+			return c.fetchWikipediaVolumesBySearch(ctx, name, maxChapter, remember)
+		},
+	})
+	return sources
+}
+
+// fetchWikipediaVolumes reads one Wikipedia page and parses its volume table.
+func (c *Client) fetchWikipediaVolumes(ctx context.Context, title string, maxChapter int) ([]Volume, string, error) {
+	target := wikipediaArticleURL(title)
+	data, status, _, err := c.fetchPage(ctx, target)
 	if err != nil {
-		return VolumeCache{}, fmt.Errorf("automatic volume mapping failed: Wikipedia and fandom unavailable: %w", err)
+		return nil, target, err
+	}
+	if status != http.StatusOK {
+		return nil, target, fmt.Errorf("status %d", status)
+	}
+	volumes, err := ParseWikipediaDisplayVolumes(data)
+	if err != nil {
+		return nil, target, err
+	}
+	return clampVolumes(volumes, maxChapter), target, nil
+}
+
+// fetchWikipediaVolumesBySearch resolves a noisy series name to a Wikipedia
+// article through the search API, then parses that page.
+func (c *Client) fetchWikipediaVolumesBySearch(ctx context.Context, name string, maxChapter int, remember func(string, error)) ([]Volume, string, error) {
+	tried := make(map[string]bool)
+	title, found, err := c.searchWikipediaListTitle(ctx, name, tried)
+	if err != nil {
+		return nil, "", err
+	}
+	if found {
+		return c.fetchWikipediaVolumes(ctx, title, maxChapter)
+	}
+
+	// Fall back to a plain article search: many series keep their volume
+	// table on the main article ("Versus (2022 manga)") rather than on a
+	// "List of ..." page.
+	for _, candidate := range c.searchWikipediaArticles(ctx, name) {
+		volumes, url, err := c.fetchWikipediaVolumes(ctx, candidate, maxChapter)
+		if err != nil {
+			remember("Wikipedia search result "+candidate, err)
+			continue
+		}
+		return volumes, url, nil
+	}
+	return nil, "", errors.New("no Wikipedia article with volume rows")
+}
+
+// searchWikipediaArticles returns article titles matching a series name.
+func (c *Client) searchWikipediaArticles(ctx context.Context, name string) []string {
+	values := url.Values{}
+	values.Set("action", "query")
+	values.Set("list", "search")
+	values.Set("format", "json")
+	values.Set("srlimit", "10")
+	values.Set("srsearch", name+" manga")
+	data, status, _, err := c.fetchPage(ctx, "https://en.wikipedia.org/w/api.php?"+values.Encode())
+	if err != nil || status != http.StatusOK {
+		return nil
+	}
+	var response struct {
+		Query struct {
+			Search []struct {
+				Title string `json:"title"`
+			} `json:"search"`
+		} `json:"query"`
+	}
+	if err := json.Unmarshal(data, &response); err != nil {
+		return nil
+	}
+	titles := make([]string, 0, len(response.Query.Search))
+	for _, item := range response.Query.Search {
+		if strings.HasPrefix(strings.ToLower(item.Title), "list of ") {
+			continue
+		}
+		titles = append(titles, item.Title)
+	}
+	return titles
+}
+
+// fetchMangaDexVolumes reads per-chapter volume numbers from the MangaDex
+// aggregate endpoint. MangaDex coverage is uneven, so a partial mapping is
+// accepted only when it yields contiguous, non-overlapping volume ranges.
+func (c *Client) fetchMangaDexVolumes(ctx context.Context, name string, maxChapter int) ([]Volume, string, error) {
+	id, err := c.mangaDexID(ctx, name)
+	if err != nil {
+		return nil, "", err
+	}
+	// No translatedLanguage filter: MangaDex spreads volume labels across
+	// scanlation languages, and filtering to English drops most of them
+	// (Dandadan returns 1 volume with the filter, 11 without).
+	target := "https://api.mangadex.org/manga/" + id + "/aggregate"
+	data, status, _, err := c.fetchPage(ctx, target)
+	if err != nil {
+		return nil, target, err
+	}
+	if status != http.StatusOK {
+		return nil, target, fmt.Errorf("status %d", status)
+	}
+
+	var payload struct {
+		Volumes map[string]struct {
+			Chapters map[string]struct {
+				Chapter string `json:"chapter"`
+			} `json:"chapters"`
+		} `json:"volumes"`
+	}
+	if err := json.Unmarshal(data, &payload); err != nil {
+		return nil, target, err
+	}
+
+	type bound struct{ start, end int }
+	bounds := make(map[int]bound)
+	for key, group := range payload.Volumes {
+		if key == "none" {
+			continue
+		}
+		volume, convErr := strconv.Atoi(key)
+		if convErr != nil || volume <= 0 {
+			continue
+		}
+		for _, chapter := range group.Chapters {
+			whole := chapterNumber(chapter.Chapter)
+			if whole <= 0 {
+				continue
+			}
+			current, exists := bounds[volume]
+			if !exists {
+				bounds[volume] = bound{start: whole, end: whole}
+				continue
+			}
+			if whole < current.start {
+				current.start = whole
+			}
+			if whole > current.end {
+				current.end = whole
+			}
+			bounds[volume] = current
+		}
+	}
+	if len(bounds) == 0 {
+		return nil, target, errors.New("no volume numbers in chapter feed")
+	}
+
+	numbers := make([]int, 0, len(bounds))
+	for volume := range bounds {
+		numbers = append(numbers, volume)
+	}
+	sort.Ints(numbers)
+	volumes := make([]Volume, 0, len(numbers))
+	for _, volume := range numbers {
+		volumes = append(volumes, Volume{Volume: volume, Start: bounds[volume].start, End: bounds[volume].end})
+	}
+	if err := ValidateVolumes(volumes, maxChapter); err != nil {
+		return nil, target, err
+	}
+	return volumes, target, nil
+}
+
+// mangaDexID resolves the MangaDex manga id for a series title.
+func (c *Client) mangaDexID(ctx context.Context, name string) (string, error) {
+	values := url.Values{}
+	values.Set("title", name)
+	values.Set("limit", "5")
+	target := "https://api.mangadex.org/manga?" + values.Encode()
+	data, status, _, err := c.fetchPage(ctx, target)
+	if err != nil {
+		return "", err
+	}
+	if status != http.StatusOK {
+		return "", fmt.Errorf("MangaDex search status %d", status)
+	}
+	var payload struct {
+		Data []struct {
+			ID         string `json:"id"`
+			Attributes struct {
+				Title map[string]string `json:"title"`
+			} `json:"attributes"`
+		} `json:"data"`
+	}
+	if err := json.Unmarshal(data, &payload); err != nil {
+		return "", err
+	}
+	want := normalizeTitle(name)
+	for _, item := range payload.Data {
+		for _, title := range item.Attributes.Title {
+			if normalizeTitle(title) == want {
+				return item.ID, nil
+			}
+		}
+	}
+	if len(payload.Data) > 0 {
+		return payload.Data[0].ID, nil
+	}
+	return "", errors.New("series not found on MangaDex")
+}
+
+func normalizeTitle(value string) string {
+	lower := strings.ToLower(value)
+	var builder strings.Builder
+	for _, r := range lower {
+		if r >= 'a' && r <= 'z' || r >= '0' && r <= '9' {
+			builder.WriteRune(r)
+		}
+	}
+	return builder.String()
+}
+
+// fetchFandomVolumes reads the community wiki "Volumes & Chapters" page.
+func (c *Client) fetchFandomVolumes(ctx context.Context, name string, maxChapter int) ([]Volume, string, error) {
+	slug := strings.ToLower(strings.ReplaceAll(name, " ", ""))
+	target := "https://" + slug + ".fandom.com/wiki/Volumes_%26_Chapters"
+	data, status, _, err := c.fetchPage(ctx, target)
+	if err != nil {
+		return nil, target, err
+	}
+	if status != http.StatusOK {
+		return nil, target, fmt.Errorf("status %d", status)
 	}
 	volumes, err := ParseVolumeMapping(data, maxChapter)
 	if err != nil {
-		return VolumeCache{}, fmt.Errorf("automatic volume mapping failed: fandom mapping invalid: %w", err)
+		return nil, target, err
 	}
-	return VolumeCache{Source: fandomURL, Volumes: volumes}, nil
+	return clampVolumes(volumes, maxChapter), target, nil
+}
+
+// chapterNumber extracts the whole part of a chapter label ("12.5" → 12).
+func chapterNumber(label string) int {
+	label = strings.TrimSpace(label)
+	if label == "" {
+		return 0
+	}
+	if dot := strings.IndexByte(label, '.'); dot >= 0 {
+		label = label[:dot]
+	}
+	value, err := strconv.Atoi(label)
+	if err != nil || value <= 0 {
+		return 0
+	}
+	return value
+}
+
+// clampVolumes drops volumes that start beyond the last discovered chapter and
+// caps the final range at maxChapter.
+func clampVolumes(volumes []Volume, maxChapter int) []Volume {
+	if maxChapter <= 0 {
+		return volumes
+	}
+	kept := make([]Volume, 0, len(volumes))
+	for _, volume := range volumes {
+		if volume.Start > maxChapter {
+			continue
+		}
+		if volume.End > maxChapter {
+			volume.End = maxChapter
+		}
+		kept = append(kept, volume)
+	}
+	return kept
 }
 
 func DecodeVolumeCache(data []byte, maxChapter int) (VolumeCache, error) {
@@ -615,4 +1023,14 @@ func DecodeVolumeCache(data []byte, maxChapter int) (VolumeCache, error) {
 		return VolumeCache{}, fmt.Errorf("invalid volume cache: %w", err)
 	}
 	return cache, nil
+}
+
+// DecodeVolumeCacheFile reads a pinned .volumes.json mapping from disk. It is
+// the offline path used when no provider lookup is allowed.
+func DecodeVolumeCacheFile(path string) (VolumeCache, error) {
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return VolumeCache{}, err
+	}
+	return DecodeVolumeCache(data, 0)
 }

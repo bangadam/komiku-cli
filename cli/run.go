@@ -46,11 +46,10 @@ type exitCodeError struct {
 func (e exitCodeError) Error() string { return fmt.Sprintf("exit %d", e.code) }
 
 type Dependencies struct {
-	HTTP             *http.Client
-	Now              func() time.Time
-	ConfigPath       string
-	BaseURL          string
-	subscriptionsPath string
+	HTTP       *http.Client
+	Now        func() time.Time
+	ConfigPath string
+	BaseURL    string
 }
 
 func Main(ctx context.Context, args []string, stdout, stderr io.Writer, dependencies Dependencies) int {
@@ -76,6 +75,7 @@ func printHeadlessUsage(stderr io.Writer) {
 	fmt.Fprintln(stderr, "usage: komiku-cli config [--out DIR]")
 	fmt.Fprintln(stderr, "usage: komiku-cli search <query> [--json]")
 	fmt.Fprintln(stderr, "usage: komiku-cli info <series-url> [--out DIR] [--json]")
+	fmt.Fprintln(stderr, coverCommandUsage)
 }
 
 func NewRootCommand(stdout, stderr io.Writer, dependencies Dependencies) *cobra.Command {
@@ -90,12 +90,12 @@ func NewRootCommand(stdout, stderr io.Writer, dependencies Dependencies) *cobra.
 			DisableDefaultCmd: true,
 		},
 		RunE: func(cmd *cobra.Command, args []string) error {
-		if len(args) > 0 {
-			fmt.Fprintf(cmd.ErrOrStderr(), "unknown command %q; expected tui, dl, pack, verify, serve, subscribe, unsubscribe, subs, update, config, search, or info\n", args[0])
+			if len(args) > 0 {
+				fmt.Fprintf(cmd.ErrOrStderr(), "unknown command %q; expected tui, dl, pack, verify, update, library, config, search, info, or cover\n", args[0])
+				return exitCodeError{2}
+			}
+			printHeadlessUsage(cmd.ErrOrStderr())
 			return exitCodeError{2}
-		}
-		printHeadlessUsage(cmd.ErrOrStderr())
-		return exitCodeError{2}
 		},
 	}
 	root.SetOut(stdout)
@@ -103,15 +103,21 @@ func NewRootCommand(stdout, stderr io.Writer, dependencies Dependencies) *cobra.
 	root.AddCommand(NewDownloadCommand(dependencies))
 	root.AddCommand(NewPackCommand(dependencies))
 	root.AddCommand(NewVerifyCommand())
-	root.AddCommand(NewServeCommand(dependencies))
-	root.AddCommand(NewSubscribeCommand(dependencies))
-	root.AddCommand(NewUnsubscribeCommand(dependencies))
-	root.AddCommand(NewSubsCommand(dependencies))
 	root.AddCommand(NewUpdateCommand(dependencies))
 	root.AddCommand(NewLibraryCommand(dependencies))
 	root.AddCommand(NewConfigCommand(dependencies))
 	root.AddCommand(NewSearchCommand(dependencies))
 	root.AddCommand(NewInfoCommand(dependencies))
+	root.AddCommand(NewCoverCommand(dependencies))
+	root.AddCommand(NewReadCommand(dependencies))
+	root.AddCommand(NewRankingCommand(dependencies))
+	root.AddCommand(NewTrendingCommand(dependencies))
+	root.AddCommand(NewLatestCommand(dependencies))
+	root.AddCommand(NewNewCommand(dependencies))
+	root.AddCommand(NewRandomCommand(dependencies))
+	root.AddCommand(NewCatalogCommand(dependencies))
+	root.AddCommand(NewGenresCommand(dependencies))
+	root.AddCommand(NewGenreCommand(dependencies))
 	return root
 }
 
@@ -148,6 +154,9 @@ func NewDownloadCommand(dependencies Dependencies) *cobra.Command {
 	cmd.Flags().String("delay", "", "image request delay")
 	cmd.Flags().String("preset", "", "pack preset")
 	cmd.Flags().Int("workers", 3, "chapter worker count")
+	cmd.Flags().Bool("progress", false, "stream NDJSON progress events on stdout")
+	cmd.Flags().Bool("cover", true, "save the series cover art into the series directory")
+	cmd.Flags().String("volume-source", "mangadex", "volume mapping source: mangadex (default), auto, wikipedia, or fandom")
 	return cmd
 }
 
@@ -161,6 +170,7 @@ func runDownload(ctx context.Context, seriesURL string, flags *pflag.FlagSet, st
 	delay, _ := flags.GetString("delay")
 	preset, _ := flags.GetString("preset")
 	workers, _ := flags.GetInt("workers")
+	volumeSourceName, _ := flags.GetString("volume-source")
 	if !noTUI {
 		return errors.New("issues 01-13 support headless mode only; pass --no-tui")
 	}
@@ -217,7 +227,7 @@ func runDownload(ctx context.Context, seriesURL string, flags *pflag.FlagSet, st
 	if err != nil {
 		return err
 	}
-	client := komiku.NewClient(dependencies.HTTP, config.ImageDelay)
+	client := dependencies.newKomikuClient(config.ImageDelay)
 	chapters, err := client.Discover(ctx, seriesURL)
 	if err != nil {
 		return fmt.Errorf("discover chapters: %w", err)
@@ -245,7 +255,11 @@ func runDownload(ctx context.Context, seriesURL string, flags *pflag.FlagSet, st
 		if flat {
 			return errors.New("--flat is used with --ch; --vol requires a volume mapping")
 		}
-		volumes, err := LoadVolumeMapping(ctx, client, seriesStore.Dir(), series, chapters)
+		volumeSource, sourceErr := komiku.ParseVolumeSource(volumeSourceName)
+		if sourceErr != nil {
+			return sourceErr
+		}
+		volumes, err := LoadVolumeMappingFrom(ctx, client, seriesStore.Dir(), series, chapters, volumeSource, flags.Changed("volume-source"))
 		if err != nil {
 			return err
 		}
@@ -264,8 +278,14 @@ func runDownload(ctx context.Context, seriesURL string, flags *pflag.FlagSet, st
 	if err := ctx.Err(); err != nil {
 		return fmt.Errorf("download interrupted: %w", err)
 	}
+	progress, _ := flags.GetBool("progress")
 	engine := Engine{Client: client, Store: seriesStore, Workers: workers, Now: dependencies.Now}
-	summary := engine.Run(ctx, jobs)
+	var summary Summary
+	if progress {
+		summary = runWithProgressEvents(ctx, engine, jobs, stdout)
+	} else {
+		summary = engine.Run(ctx, jobs)
+	}
 	if summary.Err != nil {
 		return summary.Err
 	}
@@ -293,6 +313,13 @@ func runDownload(ctx context.Context, seriesURL string, flags *pflag.FlagSet, st
 			fmt.Fprintf(stdout, "chapter %s: %s pages=%d/%d\n", result.Chapter.Display, result.Label(), result.Success, result.Total)
 		}
 		fmt.Fprintf(stdout, "summary DONE=%d PART=%d FAIL=%d NOIMG=%d log=%s\n", summary.Counts[Done], summary.Counts[Part], summary.Counts[Fail], summary.Counts[NoImg], summary.AuditPath)
+	}
+	if saveCover, _ := flags.GetBool("cover"); saveCover {
+		// Cover art is decoration: a failure here must not fail a finished
+		// download. JSON output stays clean, so only warn in text mode.
+		if _, coverErr := fetchCoverBestEffort(ctx, client, seriesStore.Dir(), seriesURL); coverErr != nil && !asJSON {
+			fmt.Fprintf(stdout, "warning: cover: %v\n", coverErr)
+		}
 	}
 	if failed {
 		return errors.New("batch completed with partial or failed chapters")
@@ -393,15 +420,15 @@ type ResultReport struct {
 
 func writeDownloadReportJSON(stdout io.Writer, series, seriesURL string, summary Summary, volumes []komiku.Volume) error {
 	report := DownloadReport{
-		Series:        series,
-		SeriesURL:     seriesURL,
-		Requested:     summary.Requested,
-		Started:       summary.Started,
-		PagesOK:       summary.PagesOK,
-		PagesFailed:   summary.PagesFailed,
-		Counts:        summary.Counts,
-		AuditPath:     summary.AuditPath,
-		Results:       make([]ResultReport, 0, len(summary.Results)),
+		Series:      series,
+		SeriesURL:   seriesURL,
+		Requested:   summary.Requested,
+		Started:     summary.Started,
+		PagesOK:     summary.PagesOK,
+		PagesFailed: summary.PagesFailed,
+		Counts:      summary.Counts,
+		AuditPath:   summary.AuditPath,
+		Results:     make([]ResultReport, 0, len(summary.Results)),
 	}
 	for _, volume := range volumes {
 		report.MappedVolumes = append(report.MappedVolumes, volume.Volume)
@@ -430,16 +457,65 @@ func SelectedVolumeMappings(volumes []komiku.Volume, expression string) ([]komik
 		return nil, err
 	}
 	selected := make([]komiku.Volume, 0, len(wanted))
+	available := make(map[int]bool, len(volumes))
 	for _, volume := range volumes {
+		available[volume.Volume] = true
 		if wanted[volume.Volume] {
 			selected = append(selected, volume)
 		}
 	}
 	sort.Slice(selected, func(i, j int) bool { return selected[i].Volume < selected[j].Volume })
 	if len(selected) != len(wanted) {
-		return nil, errors.New("selected volume is missing from mapping")
+		missing := make([]int, 0, len(wanted)-len(selected))
+		for volume := range wanted {
+			if !available[volume] {
+				missing = append(missing, volume)
+			}
+		}
+		sort.Ints(missing)
+		return nil, fmt.Errorf(
+			"the volume mapping has no data for volume(s) %s (it covers %s); try --volume-source auto to fall back to another provider, or edit .volumes.json",
+			formatVolumeList(missing),
+			formatVolumeList(availableVolumes(volumes)),
+		)
 	}
 	return selected, nil
+}
+
+// availableVolumes returns the sorted volume numbers present in a mapping.
+func availableVolumes(volumes []komiku.Volume) []int {
+	numbers := make([]int, 0, len(volumes))
+	for _, volume := range volumes {
+		numbers = append(numbers, volume.Volume)
+	}
+	sort.Ints(numbers)
+	return numbers
+}
+
+// formatVolumeList renders volume numbers as compact ranges ("1-10,23").
+func formatVolumeList(numbers []int) string {
+	if len(numbers) == 0 {
+		return "none"
+	}
+	parts := make([]string, 0, len(numbers))
+	start, previous := numbers[0], numbers[0]
+	flush := func(from, to int) {
+		if from == to {
+			parts = append(parts, strconv.Itoa(from))
+			return
+		}
+		parts = append(parts, fmt.Sprintf("%d-%d", from, to))
+	}
+	for _, number := range numbers[1:] {
+		if number == previous+1 {
+			previous = number
+			continue
+		}
+		flush(start, previous)
+		start, previous = number, number
+	}
+	flush(start, previous)
+	return strings.Join(parts, ",")
 }
 
 func validateMappedChapters(mapping komiku.Volume, jobs []Job) error {
@@ -458,22 +534,52 @@ func validateMappedChapters(mapping komiku.Volume, jobs []Job) error {
 	return nil
 }
 
+// cacheMatchesSource reports whether a cached mapping came from the requested
+// provider. Auto mode accepts any cache.
+func cacheMatchesSource(sourceURL string, source komiku.VolumeSource) bool {
+	lower := strings.ToLower(sourceURL)
+	switch source {
+	case komiku.VolumeSourceMangaDex:
+		return strings.Contains(lower, "mangadex.org")
+	case komiku.VolumeSourceWikipedia:
+		return strings.Contains(lower, "wikipedia.org")
+	case komiku.VolumeSourceFandom:
+		return strings.Contains(lower, "fandom.com")
+	default:
+		return true
+	}
+}
+
 func LoadVolumeMapping(ctx context.Context, client *komiku.Client, seriesDir, series string, chapters []komiku.Chapter) ([]komiku.Volume, error) {
+	return LoadVolumeMappingFrom(ctx, client, seriesDir, series, chapters, komiku.VolumeSourceMangaDex, false)
+}
+
+// LoadVolumeMappingFrom resolves the mapping using the requested provider.
+// forceSource makes the provider win over an existing .volumes.json cache;
+// without it the cache is authoritative, because users may pin a mapping by
+// editing that file.
+func LoadVolumeMappingFrom(ctx context.Context, client *komiku.Client, seriesDir, series string, chapters []komiku.Chapter, source komiku.VolumeSource, forceSource bool) ([]komiku.Volume, error) {
 	cachePath := filepath.Join(seriesDir, ".volumes.json")
 	maxChapter := komiku.MaxDiscoveredChapter(chapters)
 	data, err := os.ReadFile(cachePath)
 	if err == nil {
-		cache, err := komiku.DecodeVolumeCache(data, maxChapter)
-		if err != nil {
-			return nil, err
+		cache, decodeErr := komiku.DecodeVolumeCache(data, maxChapter)
+		if decodeErr != nil {
+			return nil, decodeErr
 		}
-		return cache.Volumes, nil
-	}
-	if !errors.Is(err, os.ErrNotExist) {
+		// An explicit --volume-source must not be overridden by a cache
+		// written earlier from a different provider.
+		if !forceSource || cacheMatchesSource(cache.Source, source) {
+			return cache.Volumes, nil
+		}
+	} else if !errors.Is(err, os.ErrNotExist) {
 		return nil, fmt.Errorf("read volume cache: %w", err)
 	}
-	cache, err := client.FetchVolumeMapping(ctx, strings.ReplaceAll(series, "-", " "), maxChapter)
+	cache, err := client.FetchVolumeMappingFrom(ctx, strings.ReplaceAll(series, "-", " "), maxChapter, source)
 	if err != nil {
+		if errors.Is(err, komiku.ErrNoWikipediaVolumeRows) {
+			return nil, fmt.Errorf("%w; download with --ch ... --flat, then pack the chapter range with: komiku-cli pack %q --flat", err, seriesDir)
+		}
 		return nil, fmt.Errorf("%w; create/edit %s or use --ch ... --flat", err, cachePath)
 	}
 	if err := store.WriteJSONAtomic(cachePath, cache); err != nil {
@@ -533,6 +639,9 @@ func NewConfigCommand(dependencies Dependencies) *cobra.Command {
 		},
 	}
 	cmd.Flags().String("out", "", "persistent output directory")
+	cmd.Flags().String("delay", "", "persistent image request delay")
+	cmd.Flags().String("preset", "", "persistent CBZ preset")
+	cmd.Flags().Bool("json", false, "print the effective config as JSON")
 	return cmd
 }
 
@@ -549,9 +658,21 @@ func runConfig(flags *pflag.FlagSet, stdout io.Writer, dependencies Dependencies
 	if err != nil {
 		return err
 	}
+	changed := false
 	if flags.Changed("out") {
 		output, _ := flags.GetString("out")
 		fileConfig.OutputRoot = output
+		changed = true
+	}
+	if flags.Changed("delay") {
+		fileConfig.ImageDelay, _ = flags.GetString("delay")
+		changed = true
+	}
+	if flags.Changed("preset") {
+		fileConfig.Preset, _ = flags.GetString("preset")
+		changed = true
+	}
+	if changed {
 		if err := SaveFileConfig(configPath, fileConfig); err != nil {
 			return fmt.Errorf("save config: %w", err)
 		}
@@ -560,6 +681,71 @@ func runConfig(flags *pflag.FlagSet, stdout io.Writer, dependencies Dependencies
 	if err != nil {
 		return err
 	}
+	asJSON, _ := flags.GetBool("json")
+	if asJSON {
+		return json.NewEncoder(stdout).Encode(map[string]string{
+			"output_root": config.OutputRoot,
+			"image_delay": config.ImageDelay.String(),
+			"preset":      config.Preset,
+			"config_path": configPath,
+		})
+	}
 	fmt.Fprintf(stdout, "output root: %s\nconfig: %s\n", config.OutputRoot, configPath)
 	return nil
+}
+
+// progressEvent is the NDJSON shape consumed by the desktop GUI.
+type progressEvent struct {
+	Kind      string  `json:"kind"`
+	Index     int     `json:"index,omitempty"`
+	Chapter   string  `json:"chapter,omitempty"`
+	Number    float64 `json:"number,omitempty"`
+	Page      int     `json:"page,omitempty"`
+	Pages     int     `json:"pages,omitempty"`
+	Bytes     int64   `json:"bytes,omitempty"`
+	Status    string  `json:"status,omitempty"`
+	Success   int     `json:"success,omitempty"`
+	Total     int     `json:"total,omitempty"`
+	Message   string  `json:"message,omitempty"`
+	Requested int     `json:"requested,omitempty"`
+	Started   int     `json:"started,omitempty"`
+}
+
+// runWithProgressEvents drives a batch while emitting one JSON object per
+// line, so a GUI can render live per-chapter and per-page progress without
+// parsing human-readable text.
+func runWithProgressEvents(ctx context.Context, engine Engine, jobs []Job, stdout io.Writer) Summary {
+	batch := engine.Start(ctx, jobs)
+	encoder := json.NewEncoder(stdout)
+	emit := func(event progressEvent) {
+		_ = encoder.Encode(event)
+	}
+	emit(progressEvent{Kind: "batch_started", Requested: len(jobs)})
+	for event := range batch.Events() {
+		switch event.Kind {
+		case ChapterStarted:
+			emit(progressEvent{Kind: "chapter_started", Index: event.JobIndex, Chapter: event.Chapter.Display, Number: event.Chapter.Number})
+		case ChapterPagesKnown:
+			emit(progressEvent{Kind: "pages_known", Index: event.JobIndex, Chapter: event.Chapter.Display, Pages: event.Pages})
+		case PageDone:
+			emit(progressEvent{Kind: "page_done", Index: event.JobIndex, Chapter: event.Chapter.Display, Page: event.Page, Pages: event.Pages, Bytes: event.Bytes})
+		case PageFailed:
+			message := ""
+			if event.Err != nil {
+				message = event.Err.Error()
+			}
+			emit(progressEvent{Kind: "page_failed", Index: event.JobIndex, Chapter: event.Chapter.Display, Page: event.Page, Pages: event.Pages, Message: message})
+		case ChapterFinished:
+			emit(progressEvent{Kind: "chapter_finished", Index: event.JobIndex, Chapter: event.Chapter.Display, Status: string(event.Result.Status), Success: event.Result.Success, Total: event.Result.Total})
+		case BatchPaused:
+			emit(progressEvent{Kind: "paused"})
+		case BatchResumed:
+			emit(progressEvent{Kind: "resumed"})
+		case BatchStopping:
+			emit(progressEvent{Kind: "stopping"})
+		}
+	}
+	summary := batch.Wait()
+	emit(progressEvent{Kind: "batch_finished", Status: string(Done), Requested: summary.Requested, Started: summary.Started})
+	return summary
 }

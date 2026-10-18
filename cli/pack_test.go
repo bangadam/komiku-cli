@@ -55,14 +55,78 @@ func TestPreparePackUsesLocalSmallPagesAndExplainsMissingPages(t *testing.T) {
 
 func TestPreparePackRequiresMappedDoneVolumes(t *testing.T) {
 	seriesStore, _ := store.Open(t.TempDir(), "series")
-	if plan := PreparePack(seriesStore, "Series", packer.Raw, nil, nil, nil); plan.DisabledReason != "Pack needs a volume mapping." {
-		t.Fatalf("reason=%q", plan.DisabledReason)
+	if plan := PreparePack(seriesStore, "Series", packer.Raw, nil, nil, nil); len(plan.Skipped) != 1 || !strings.Contains(plan.Skipped[0].Reason, "no flat chapter run") {
+		t.Fatalf("reason=%+v", plan)
 	}
 	mapping := []komiku.Volume{{Volume: 1, Start: 1, End: 1}}
 	chapter := komiku.Chapter{RawID: "1", Display: "1", Number: 1, URL: "https://fixture.invalid/chapter/actual/"}
 	plan := PreparePack(seriesStore, "Series", packer.Raw, mapping, []Job{{Chapter: chapter, Volume: 1}}, []Result{{Chapter: chapter, Status: Part}})
 	if len(plan.Skipped) != 1 || !strings.Contains(plan.Skipped[0].Reason, "not completely downloaded") {
 		t.Fatalf("reason=%+v", plan)
+	}
+}
+
+func TestPreparePackFlatRunWithoutMappingPacksChaptersFromTo(t *testing.T) {
+	seriesStore, _ := store.Open(t.TempDir(), "series")
+	chapters := []komiku.Chapter{
+		{RawID: "3", Display: "3", Number: 3, URL: "three"},
+		{RawID: "1", Display: "1", Number: 1, URL: "one"},
+		{RawID: "2", Display: "2", Number: 2, URL: "two"},
+	}
+	dirs := make([]string, 0, len(chapters))
+	results := make([]Result, 0, len(chapters))
+	for _, chapter := range chapters {
+		dir, err := seriesStore.ChapterDir(chapter.Display, "", 1, true)
+		if err != nil {
+			t.Fatal(err)
+		}
+		writeManifestTestImage(t, dir, "001.jpg")
+		dirs = append(dirs, dir)
+		results = append(results, Result{Chapter: chapter, Status: Done, Total: 1, Success: 1, SourceDir: dir})
+	}
+	jobs := []Job{{Chapter: chapters[0]}, {Chapter: chapters[1]}, {Chapter: chapters[2]}}
+	plan := PreparePack(seriesStore, "Series", packer.Raw, nil, jobs, results)
+	if plan.DisabledReason != "" || len(plan.Skipped) != 0 || len(plan.Volumes) != 1 {
+		t.Fatalf("flat-run plan=%+v", plan)
+	}
+	if plan.Volumes[0].Title != "Series Chapters 1-3" || len(plan.Volumes[0].Chapters) != 3 {
+		t.Fatalf("flat-run volume=%+v", plan.Volumes[0])
+	}
+}
+
+func TestPreparePackFlatRunIncludesFractionalExtrasAndReportsGaps(t *testing.T) {
+	seriesStore, _ := store.Open(t.TempDir(), "series")
+	chapters := []komiku.Chapter{
+		{RawID: "1", Display: "1", Number: 1, URL: "one"},
+		{RawID: "1.5", Display: "1.5", Number: 1.5, URL: "extra"},
+		{RawID: "2", Display: "2", Number: 2, URL: "two"},
+	}
+	jobs := make([]Job, 0, len(chapters))
+	results := make([]Result, 0, len(chapters))
+	for _, chapter := range chapters {
+		dir, err := seriesStore.ChapterDir(chapter.Display, "", 1, true)
+		if err != nil {
+			t.Fatal(err)
+		}
+		writeManifestTestImage(t, dir, "001.jpg")
+		jobs = append(jobs, Job{Chapter: chapter})
+		results = append(results, Result{Chapter: chapter, Status: Done, Total: 1, Success: 1, SourceDir: dir})
+	}
+	plan := PreparePack(seriesStore, "Series", packer.Raw, nil, jobs, results)
+	if plan.DisabledReason != "" || len(plan.Skipped) != 0 || len(plan.Volumes) != 1 {
+		t.Fatalf("fractional plan=%+v", plan)
+	}
+	if len(plan.Volumes[0].Chapters) != 3 || plan.Volumes[0].Chapters[1].Display != "1.5" {
+		t.Fatalf("fractional extra not packed inline: %+v", plan.Volumes[0].Chapters)
+	}
+	gapOne := komiku.Chapter{RawID: "1", Display: "1", Number: 1, URL: "one"}
+	gapThree := komiku.Chapter{RawID: "3", Display: "3", Number: 3, URL: "three"}
+	plan = PreparePack(seriesStore, "Series", packer.Raw, nil, []Job{{Chapter: gapOne}, {Chapter: gapThree}}, []Result{
+		{Chapter: gapOne, Status: Done, Total: 1, Success: 1},
+		{Chapter: gapThree, Status: Done, Total: 1, Success: 1},
+	})
+	if len(plan.Skipped) != 1 || !strings.Contains(plan.Skipped[0].Reason, "chapter 2 is missing between 1 and 3") {
+		t.Fatalf("gap plan=%+v", plan)
 	}
 }
 

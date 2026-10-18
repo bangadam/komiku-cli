@@ -57,7 +57,25 @@ func LoadFileConfig(filename string) (FileConfig, error) {
 	decoder := json.NewDecoder(strings.NewReader(string(data)))
 	decoder.DisallowUnknownFields()
 	if err := decoder.Decode(&config); err != nil {
-		return FileConfig{}, fmt.Errorf("invalid config JSON: %w", err)
+		// Configs written before the KOReader upload feature was removed
+		// still carry a "kindle" block. Drop it and retry so an old file
+		// never bricks every command.
+		if !strings.Contains(err.Error(), `unknown field "kindle"`) {
+			return FileConfig{}, fmt.Errorf("invalid config JSON: %w", err)
+		}
+		migrated, migrateErr := stripLegacyKeys(data, "kindle")
+		if migrateErr != nil {
+			return FileConfig{}, fmt.Errorf("invalid config JSON: %w", err)
+		}
+		config = FileConfig{}
+		decoder = json.NewDecoder(strings.NewReader(string(migrated)))
+		decoder.DisallowUnknownFields()
+		if retryErr := decoder.Decode(&config); retryErr != nil {
+			return FileConfig{}, fmt.Errorf("invalid config JSON: %w", retryErr)
+		}
+		if saveErr := SaveFileConfig(filename, config); saveErr != nil {
+			return FileConfig{}, fmt.Errorf("migrate config: %w", saveErr)
+		}
 	}
 	var trailing any
 	if err := decoder.Decode(&trailing); !errors.Is(err, io.EOF) {
@@ -67,6 +85,18 @@ func LoadFileConfig(filename string) (FileConfig, error) {
 		return FileConfig{}, fmt.Errorf("invalid trailing config JSON: %w", err)
 	}
 	return config, nil
+}
+
+// stripLegacyKeys removes keys that no longer exist in FileConfig.
+func stripLegacyKeys(data []byte, keys ...string) ([]byte, error) {
+	var raw map[string]json.RawMessage
+	if err := json.Unmarshal(data, &raw); err != nil {
+		return nil, err
+	}
+	for _, key := range keys {
+		delete(raw, key)
+	}
+	return json.Marshal(raw)
 }
 
 func SaveFileConfig(filename string, config FileConfig) error {

@@ -5,241 +5,395 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"io/fs"
 	"net/http"
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"reflect"
 	"strings"
-	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
+
+	"github.com/bangadam/komiku-cli/store"
 )
 
-func updateFixtureServer(t *testing.T, imageHits *int) *httptest.Server {
+func updateFixtureServer(t *testing.T, imageHits *atomic.Int32) *httptest.Server {
 	t.Helper()
-	var mu sync.Mutex
 	var server *httptest.Server
 	server = httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch r.URL.Path {
 		case "/manga/fixture/":
 			fmt.Fprint(w, `<a href="/prefix-chapter-1/"></a><a href="/prefix-chapter-2/"></a><a href="/prefix-chapter-3/"></a>`)
+		case "/prefix-chapter-1/", "/prefix-chapter-2/", "/prefix-chapter-3/":
+			fmt.Fprintf(w, `<img class="klazy" src="%s/page.jpg">`, server.URL)
+		case "/page.jpg":
+			imageHits.Add(1)
+			_, _ = w.Write(append([]byte{0xff, 0xd8}, make([]byte, 11*1024)...))
 		default:
-			if strings.HasPrefix(r.URL.Path, "/prefix-chapter-") {
-				fmt.Fprintf(w, `<img class="klazy" src="%s/page.jpg">`, server.URL)
-				return
-			}
-			if r.URL.Path == "/page.jpg" {
-				mu.Lock()
-				*imageHits++
-				mu.Unlock()
-				_, _ = w.Write(append([]byte{0xff, 0xd8}, make([]byte, 11*1024)...))
-				return
-			}
-			t.Fatalf("unexpected path %s", r.URL.Path)
+			t.Errorf("unexpected path %s", r.URL.Path)
+			http.NotFound(w, r)
 		}
 	}))
 	return server
 }
 
-func TestSubscribeUnsubscribeAndList(t *testing.T) {
-	root := t.TempDir()
-	subsPath := filepath.Join(root, "subs.json")
-	now := time.Unix(1000, 0)
-	deps := Dependencies{ConfigPath: filepath.Join(root, "config.json"), Now: func() time.Time { return now }}.WithSubscriptionsPath(subsPath)
-
-	var stdout, stderr bytes.Buffer
-	code := Main(context.Background(), []string{"subscribe", "https://komiku.org/manga/fixture/"}, &stdout, &stderr, deps)
-	if code != 0 {
-		t.Fatalf("subscribe code=%d stderr=%s", code, stderr.String())
-	}
-	if !strings.Contains(stdout.String(), "subscribed: fixture") {
-		t.Fatalf("subscribe output=%s", stdout.String())
-	}
-	file, _ := LoadSubscriptions(subsPath)
-	if len(file.Subscriptions) != 1 || file.Subscriptions[0].Slug != "fixture" {
-		t.Fatalf("persisted subs=%#v", file)
-	}
-
-	// Dedup: subscribing again is a no-op.
-	stdout.Reset()
-	stderr.Reset()
-	code = Main(context.Background(), []string{"subscribe", "https://komiku.org/manga/fixture/"}, &stdout, &stderr, deps)
-	if code != 0 {
-		t.Fatalf("dedup code=%d stderr=%s", code, stderr.String())
-	}
-	if !strings.Contains(stdout.String(), "already subscribed") {
-		t.Fatalf("dedup output=%s", stdout.String())
-	}
-	file, _ = LoadSubscriptions(subsPath)
-	if len(file.Subscriptions) != 1 {
-		t.Fatalf("dedup created duplicate: %#v", file)
-	}
-
-	// List.
-	stdout.Reset()
-	stderr.Reset()
-	code = Main(context.Background(), []string{"subs"}, &stdout, &stderr, deps)
-	if code != 0 {
-		t.Fatalf("subs code=%d stderr=%s", code, stderr.String())
-	}
-	if !strings.Contains(stdout.String(), "fixture\thttps://komiku.org/manga/fixture/") {
-		t.Fatalf("subs output=%s", stdout.String())
-	}
-
-	// List JSON.
-	stdout.Reset()
-	stderr.Reset()
-	code = Main(context.Background(), []string{"subs", "--json"}, &stdout, &stderr, deps)
-	if code != 0 {
-		t.Fatalf("subs json code=%d stderr=%s", code, stderr.String())
-	}
-	var listed SubscriptionsFile
-	if err := json.Unmarshal(stdout.Bytes(), &listed); err != nil {
-		t.Fatalf("invalid JSON: %v %s", err, stdout.String())
-	}
-	if len(listed.Subscriptions) != 1 || listed.Subscriptions[0].Slug != "fixture" {
-		t.Fatalf("json subs=%#v", listed)
-	}
-
-	// Unsubscribe by slug.
-	stdout.Reset()
-	stderr.Reset()
-	code = Main(context.Background(), []string{"unsubscribe", "fixture"}, &stdout, &stderr, deps)
-	if code != 0 {
-		t.Fatalf("unsubscribe code=%d stderr=%s", code, stderr.String())
-	}
-	file, _ = LoadSubscriptions(subsPath)
-	if len(file.Subscriptions) != 0 {
-		t.Fatalf("unsubscribe did not remove: %#v", file)
-	}
-
-	// Unsubscribe missing → error.
-	stdout.Reset()
-	stderr.Reset()
-	code = Main(context.Background(), []string{"unsubscribe", "fixture"}, &stdout, &stderr, deps)
-	if code == 0 {
-		t.Fatalf("unsubscribe missing should fail")
-	}
-}
-
-func TestUpdateDryRunReportsNewChaptersWithoutDownloading(t *testing.T) {
-	var imageHits int
-	server := updateFixtureServer(t, &imageHits)
-	defer server.Close()
-	root := t.TempDir()
-	subsPath := filepath.Join(root, "subs.json")
-	configPath := filepath.Join(root, "config.json")
-	deps := Dependencies{
-		HTTP:       server.Client(),
-		ConfigPath: configPath,
-		Now:        func() time.Time { return time.Unix(2000, 0) },
-	}.WithSubscriptionsPath(subsPath)
-
-	// Seed subscription with a loopback URL (ValidateSeriesURL allows loopback).
-	seriesURL := server.URL + "/manga/fixture/"
-	file := SubscriptionsFile{Subscriptions: []Subscription{{SeriesURL: seriesURL, Slug: "fixture"}}}
-	if err := SaveSubscriptions(subsPath, file); err != nil {
+// isolatedCLIConfig keeps legacy-file checks away from the user's config data.
+func isolatedCLIConfig(t *testing.T) string {
+	t.Helper()
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	t.Setenv("XDG_CONFIG_HOME", filepath.Join(home, ".config"))
+	t.Setenv("AppData", filepath.Join(home, "AppData", "Roaming"))
+	path, err := ConfigPath()
+	if err != nil {
 		t.Fatal(err)
 	}
-
-	var stdout, stderr bytes.Buffer
-	code := Main(context.Background(), []string{"update", "--check"}, &stdout, &stderr, deps)
-	if code != 0 {
-		t.Fatalf("update --check code=%d stderr=%s", code, stderr.String())
-	}
-	if imageHits != 0 {
-		t.Fatalf("dry run downloaded images: hits=%d", imageHits)
-	}
-	out := stdout.String()
-	if !strings.Contains(out, "fixture  new=3 downloaded=0 skipped=0 failed=0") {
-		t.Fatalf("dry run output=%s", out)
-	}
-	if !strings.Contains(out, "new chapters: 1, 2, 3") {
-		t.Fatalf("dry run did not list new chapters: %s", out)
-	}
+	return path
 }
 
-func TestUpdateDownloadsNewChaptersAndSkipsDone(t *testing.T) {
-	var imageHits int
+type updateFileSnapshot struct {
+	Mode    fs.FileMode
+	ModTime time.Time
+	Content string
+}
+
+func snapshotUpdateFiles(t *testing.T, root string) map[string]updateFileSnapshot {
+	t.Helper()
+	files := make(map[string]updateFileSnapshot)
+	err := filepath.WalkDir(root, func(path string, entry fs.DirEntry, err error) error {
+		if err != nil {
+			return err
+		}
+		info, err := entry.Info()
+		if err != nil {
+			return err
+		}
+		snapshot := updateFileSnapshot{Mode: info.Mode(), ModTime: info.ModTime()}
+		if !entry.IsDir() {
+			data, err := os.ReadFile(path)
+			if err != nil {
+				return err
+			}
+			snapshot.Content = string(data)
+		}
+		files[path] = snapshot
+		return nil
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	return files
+}
+
+func TestUpdateDryRunReportsMissingChaptersWithoutMutation(t *testing.T) {
+	var imageHits atomic.Int32
 	server := updateFixtureServer(t, &imageHits)
 	defer server.Close()
 	root := t.TempDir()
-	subsPath := filepath.Join(root, "subs.json")
-	configPath := filepath.Join(root, "config.json")
+	configPath := isolatedCLIConfig(t)
+	if err := SaveFileConfig(configPath, FileConfig{OutputRoot: root}); err != nil {
+		t.Fatal(err)
+	}
+	// The local name differs from the URL slug: the manifest must win.
+	dir := filepath.Join(root, "renamed-fixture")
+	writeImage(t, filepath.Join(dir, "vol-01", "chapter-001"), "001.jpg", validJPEG)
+	if err := storeWrite(t, filepath.Join(dir, ".state.json"), `{"done":[1]}`); err != nil {
+		t.Fatal(err)
+	}
 	seriesURL := server.URL + "/manga/fixture/"
+	writeSeriesManifestFixture(t, dir, seriesURL)
+	deps := Dependencies{HTTP: server.Client(), BaseURL: server.URL, ConfigPath: configPath}
+
+	for _, asJSON := range []bool{false, true} {
+		before := snapshotUpdateFiles(t, root)
+		configBefore := snapshotUpdateFiles(t, filepath.Dir(configPath))
+		args := []string{"update", "--check"}
+		if asJSON {
+			args = append(args, "--json")
+		}
+		var stdout, stderr bytes.Buffer
+		if code := Main(context.Background(), args, &stdout, &stderr, deps); code != 0 {
+			t.Fatalf("update --check code=%d stderr=%s", code, stderr.String())
+		}
+		if asJSON {
+			var report UpdateReport
+			if err := json.Unmarshal(stdout.Bytes(), &report); err != nil {
+				t.Fatalf("invalid JSON: %v %s", err, stdout.String())
+			}
+			if len(report.Series) != 1 {
+				t.Fatalf("report=%+v", report)
+			}
+			entry := report.Series[0]
+			if entry.Slug != "renamed-fixture" || entry.SeriesURL != seriesURL || entry.Downloaded != 0 || entry.Skipped != 1 || entry.Failed != 0 || entry.Error != "" || !reflect.DeepEqual(entry.NewChapters, []string{"2", "3"}) {
+				t.Fatalf("report=%+v", report)
+			}
+		} else if !strings.Contains(stdout.String(), "renamed-fixture  new=2 downloaded=0 skipped=1 failed=0") || !strings.Contains(stdout.String(), "new chapters: 2, 3") {
+			t.Fatalf("dry run output=%s", stdout.String())
+		}
+		if imageHits.Load() != 0 {
+			t.Fatalf("dry run downloaded images: hits=%d", imageHits.Load())
+		}
+		if !reflect.DeepEqual(before, snapshotUpdateFiles(t, root)) || !reflect.DeepEqual(configBefore, snapshotUpdateFiles(t, filepath.Dir(configPath))) {
+			t.Fatal("dry run mutated library or config files")
+		}
+	}
+}
+
+func TestUpdateDownloadsMissingChaptersAndSkipsDone(t *testing.T) {
+	var imageHits atomic.Int32
+	server := updateFixtureServer(t, &imageHits)
+	defer server.Close()
+	root := t.TempDir()
+	configPath := isolatedCLIConfig(t)
+	if err := SaveFileConfig(configPath, FileConfig{OutputRoot: t.TempDir()}); err != nil {
+		t.Fatal(err)
+	}
 	deps := Dependencies{
 		HTTP:       server.Client(),
+		BaseURL:    server.URL,
 		ConfigPath: configPath,
 		Now:        func() time.Time { return time.Unix(3000, 0) },
-	}.WithSubscriptionsPath(subsPath)
-
-	file := SubscriptionsFile{Subscriptions: []Subscription{{SeriesURL: seriesURL, Slug: "fixture"}}}
-	if err := SaveSubscriptions(subsPath, file); err != nil {
+	}
+	writeImage(t, filepath.Join(root, "fixture", "chapter-001"), "001.jpg", validJPEG)
+	if err := storeWrite(t, filepath.Join(root, "fixture", ".state.json"), `{"done":[1]}`); err != nil {
 		t.Fatal(err)
 	}
 
 	var stdout, stderr bytes.Buffer
-	code := Main(context.Background(), []string{"update", "--out", root, "--delay", "0s"}, &stdout, &stderr, deps)
-	if code != 0 {
+	args := []string{"update", "--out", root, "--delay", "0s", "--json"}
+	if code := Main(context.Background(), args, &stdout, &stderr, deps); code != 0 {
 		t.Fatalf("update code=%d stderr=%s", code, stderr.String())
-	}
-	if imageHits != 3 {
-		t.Fatalf("expected 3 image fetches, got %d", imageHits)
-	}
-
-	// Second run: all chapters done, should fetch nothing.
-	imageHits = 0
-	stdout.Reset()
-	stderr.Reset()
-	code = Main(context.Background(), []string{"update", "--out", root, "--delay", "0s", "--json"}, &stdout, &stderr, deps)
-	if code != 0 {
-		t.Fatalf("second update code=%d stderr=%s", code, stderr.String())
 	}
 	var report UpdateReport
 	if err := json.Unmarshal(stdout.Bytes(), &report); err != nil {
 		t.Fatalf("invalid JSON: %v %s", err, stdout.String())
 	}
-	if len(report.Series) != 1 || report.Series[0].Downloaded != 0 || report.Series[0].Skipped != 3 {
-		t.Fatalf("second update report=%#v", report)
+	if len(report.Series) != 1 || report.Series[0].SeriesURL != server.URL+"/manga/fixture/" || report.Series[0].Downloaded != 2 || report.Series[0].Skipped != 1 || report.Series[0].Failed != 0 || report.Series[0].Error != "" || !reflect.DeepEqual(report.Series[0].NewChapters, []string{"2", "3"}) {
+		t.Fatalf("update report=%+v", report)
 	}
-	if imageHits != 0 {
-		t.Fatalf("second run refetched: hits=%d", imageHits)
+	if imageHits.Load() != 2 {
+		t.Fatalf("expected 2 image fetches, got %d", imageHits.Load())
+	}
+	done, err := store.ReadDone(root, "fixture")
+	if err != nil || !reflect.DeepEqual(done, []float64{1, 2, 3}) {
+		t.Fatalf("done=%v err=%v", done, err)
+	}
+	for _, chapter := range []string{"001", "002", "003"} {
+		if !store.ValidResumeFile(filepath.Join(root, "fixture", "chapter-"+chapter, "001.jpg")) {
+			t.Fatalf("chapter %s is missing its downloaded page", chapter)
+		}
+	}
+	original, err := os.ReadFile(filepath.Join(root, "fixture", "chapter-001", "001.jpg"))
+	if err != nil || !bytes.Equal(original, validJPEG) {
+		t.Fatalf("existing chapter changed: %v", err)
 	}
 
-	// last_check timestamp persisted.
-	persisted, _ := LoadSubscriptions(subsPath)
-	if persisted.Subscriptions[0].LastCheck.IsZero() {
-		t.Fatalf("last_check not persisted: %#v", persisted)
+	// A second run neither refetches completed pages nor rewrites local state.
+	before := snapshotUpdateFiles(t, root)
+	stdout.Reset()
+	stderr.Reset()
+	if code := Main(context.Background(), args, &stdout, &stderr, deps); code != 0 {
+		t.Fatalf("second update code=%d stderr=%s", code, stderr.String())
+	}
+	report = UpdateReport{}
+	if err := json.Unmarshal(stdout.Bytes(), &report); err != nil {
+		t.Fatalf("invalid JSON: %v %s", err, stdout.String())
+	}
+	if len(report.Series) != 1 || report.Series[0].Downloaded != 0 || report.Series[0].Skipped != 3 || len(report.Series[0].NewChapters) != 0 || report.Series[0].Error != "" {
+		t.Fatalf("second update report=%+v", report)
+	}
+	if imageHits.Load() != 2 || !reflect.DeepEqual(before, snapshotUpdateFiles(t, root)) {
+		t.Fatal("second update fetched pages or changed library files")
+	}
+	if _, err := os.Stat(filepath.Join(filepath.Dir(configPath), "subscriptions.json")); !os.IsNotExist(err) {
+		t.Fatalf("update created a legacy subscription file: %v", err)
 	}
 }
 
-func TestUpdateNoSubscriptionsIsHelpful(t *testing.T) {
-	root := t.TempDir()
-	subsPath := filepath.Join(root, "subs.json")
-	configPath := filepath.Join(root, "config.json")
-	deps := Dependencies{ConfigPath: configPath}.WithSubscriptionsPath(subsPath)
-
-	var stdout, stderr bytes.Buffer
-	code := Main(context.Background(), []string{"update"}, &stdout, &stderr, deps)
-	if code != 0 {
-		t.Fatalf("update no-subs code=%d stderr=%s", code, stderr.String())
-	}
-	if !strings.Contains(stdout.String(), "no subscriptions") {
-		t.Fatalf("expected helpful message, got: %s", stdout.String())
+func TestUpdateEmptyLibraryIsReadOnly(t *testing.T) {
+	for _, exists := range []bool{false, true} {
+		t.Run(fmt.Sprintf("exists=%t", exists), func(t *testing.T) {
+			root := t.TempDir()
+			output := filepath.Join(root, "library")
+			if exists {
+				if err := os.Mkdir(output, 0o755); err != nil {
+					t.Fatal(err)
+				}
+			}
+			deps := Dependencies{ConfigPath: isolatedCLIConfig(t), HTTP: &http.Client{Transport: roundTripFunc(func(*http.Request) (*http.Response, error) {
+				t.Error("empty library made an HTTP request")
+				return nil, fmt.Errorf("unexpected HTTP request")
+			})}}
+			before := snapshotUpdateFiles(t, root)
+			for _, extra := range [][]string{nil, {"--json"}, {"--check"}, {"--check", "--json"}} {
+				args := append([]string{"update", "--out", output}, extra...)
+				var stdout, stderr bytes.Buffer
+				if code := Main(context.Background(), args, &stdout, &stderr, deps); code != 0 {
+					t.Fatalf("update code=%d stderr=%s", code, stderr.String())
+				}
+				if strings.Contains(strings.Join(extra, " "), "--json") {
+					if strings.TrimSpace(stdout.String()) != `{"series":null}` {
+						t.Fatalf("empty JSON contract changed: %s", stdout.String())
+					}
+				} else if !strings.Contains(stdout.String(), "no series downloaded yet") {
+					t.Fatalf("expected helpful message, got: %s", stdout.String())
+				}
+				if !reflect.DeepEqual(before, snapshotUpdateFiles(t, root)) {
+					t.Fatal("empty update mutated the library")
+				}
+				if _, err := os.Stat(filepath.Dir(deps.ConfigPath)); !os.IsNotExist(err) {
+					t.Fatalf("update created a config directory: %v", err)
+				}
+			}
+		})
 	}
 }
 
-func TestSubsEmptyPrintsPlaceholder(t *testing.T) {
+func TestUpdateIgnoresLegacySubscriptionData(t *testing.T) {
+	for _, malformed := range []bool{false, true} {
+		t.Run(fmt.Sprintf("malformed=%t", malformed), func(t *testing.T) {
+			var imageHits atomic.Int32
+			server := updateFixtureServer(t, &imageHits)
+			defer server.Close()
+			root := t.TempDir()
+			configPath := isolatedCLIConfig(t)
+			if err := SaveFileConfig(configPath, FileConfig{OutputRoot: root}); err != nil {
+				t.Fatal(err)
+			}
+			legacy := fmt.Sprintf(`{"subscriptions":[{"slug":"remote-only","series_url":%q},{"slug":"fixture","series_url":%q}]}`, server.URL+"/manga/remote-only/", server.URL+"/manga/wrong-fixture/")
+			if malformed {
+				legacy = "not JSON"
+			}
+			if err := storeWrite(t, filepath.Join(filepath.Dir(configPath), "subscriptions.json"), legacy); err != nil {
+				t.Fatal(err)
+			}
+			if err := storeWrite(t, filepath.Join(root, "fixture", ".state.json"), `{"done":[1,2,3]}`); err != nil {
+				t.Fatal(err)
+			}
+			// Default config resolution must not consult the adjacent legacy file.
+			deps := Dependencies{HTTP: server.Client(), BaseURL: server.URL}
+			before := snapshotUpdateFiles(t, root)
+			configBefore := snapshotUpdateFiles(t, filepath.Dir(configPath))
+			for _, check := range []bool{true, false} {
+				args := []string{"update", "--json"}
+				if check {
+					args = append(args, "--check")
+				}
+				var stdout, stderr bytes.Buffer
+				if code := Main(context.Background(), args, &stdout, &stderr, deps); code != 0 {
+					t.Fatalf("update code=%d stderr=%s", code, stderr.String())
+				}
+				var report UpdateReport
+				if err := json.Unmarshal(stdout.Bytes(), &report); err != nil {
+					t.Fatal(err)
+				}
+				if len(report.Series) != 1 || report.Series[0].Slug != "fixture" || report.Series[0].SeriesURL != server.URL+"/manga/fixture/" || report.Series[0].Skipped != 3 || report.Series[0].Error != "" {
+					t.Fatalf("legacy data affected update: %+v", report)
+				}
+				if !reflect.DeepEqual(before, snapshotUpdateFiles(t, root)) || !reflect.DeepEqual(configBefore, snapshotUpdateFiles(t, filepath.Dir(configPath))) {
+					t.Fatal("update changed existing library or legacy config data")
+				}
+			}
+			if imageHits.Load() != 0 {
+				t.Fatalf("unexpected image fetches: %d", imageHits.Load())
+			}
+		})
+	}
+}
+
+func TestUpdateSkipsDirectoriesWithoutDownloadedState(t *testing.T) {
 	root := t.TempDir()
-	subsPath := filepath.Join(root, "subs.json")
-	deps := Dependencies{}.WithSubscriptionsPath(subsPath)
+	for _, path := range []string{"unrelated", "empty-chapter/chapter-001", "empty-volume/vol-01", "state-directory/.state.json", "archive-directory/empty.cbz"} {
+		if err := os.MkdirAll(filepath.Join(root, path), 0o755); err != nil {
+			t.Fatal(err)
+		}
+	}
+	for path, content := range map[string]string{
+		"cover-only/cover.jpg":                  "cover",
+		"cache-only/.volumes.json":              `{"volumes":[]}`,
+		"empty-state/.state.json":               `{"done":[]}`,
+		"invalid-state/.state.json":             "not JSON",
+		"empty-archive/empty.cbz":               "",
+		"unrelated-pages/chapter-001/notes.txt": "not a page",
+		"unrelated-pages/chapter-001/cover.jpg": "not a numbered page",
+		"empty-chapter/chapter-001/001.jpg":     "",
+		"invalid-manifest/.pack.json":           "not JSON",
+	} {
+		if err := storeWrite(t, filepath.Join(root, path), content); err != nil {
+			t.Fatal(err)
+		}
+	}
+	writeSeriesManifestFixture(t, filepath.Join(root, "metadata-only"), "https://komiku.org/manga/metadata-only/")
+	deps := Dependencies{ConfigPath: isolatedCLIConfig(t), HTTP: &http.Client{Transport: roundTripFunc(func(*http.Request) (*http.Response, error) {
+		t.Error("metadata-only directory made an HTTP request")
+		return nil, fmt.Errorf("unexpected HTTP request")
+	})}}
+	before := snapshotUpdateFiles(t, root)
 	var stdout, stderr bytes.Buffer
-	code := Main(context.Background(), []string{"subs"}, &stdout, &stderr, deps)
-	if code != 0 {
-		t.Fatalf("subs code=%d stderr=%s", code, stderr.String())
+	if code := Main(context.Background(), []string{"update", "--out", root, "--check", "--json"}, &stdout, &stderr, deps); code != 0 {
+		t.Fatalf("update code=%d stderr=%s", code, stderr.String())
 	}
-	if !strings.Contains(stdout.String(), "no subscriptions") {
-		t.Fatalf("expected placeholder, got: %s", stdout.String())
+	var report UpdateReport
+	if err := json.Unmarshal(stdout.Bytes(), &report); err != nil || len(report.Series) != 0 {
+		t.Fatalf("unexpected report=%+v err=%v", report, err)
 	}
-	_ = os.Stat
+	if !reflect.DeepEqual(before, snapshotUpdateFiles(t, root)) {
+		t.Fatal("checking metadata-only directories mutated files")
+	}
+}
+
+func TestUpdateCheckWithoutStateDoesNotCreateIt(t *testing.T) {
+	var imageHits atomic.Int32
+	server := updateFixtureServer(t, &imageHits)
+	defer server.Close()
+	root := t.TempDir()
+	writeImage(t, filepath.Join(root, "fixture", "chapter-001"), "001.jpg", validJPEG)
+	before := snapshotUpdateFiles(t, root)
+	deps := Dependencies{HTTP: server.Client(), BaseURL: server.URL, ConfigPath: isolatedCLIConfig(t)}
+	var stdout, stderr bytes.Buffer
+	if code := Main(context.Background(), []string{"update", "--out", root, "--check", "--json"}, &stdout, &stderr, deps); code != 0 {
+		t.Fatalf("update code=%d stderr=%s", code, stderr.String())
+	}
+	var report UpdateReport
+	if err := json.Unmarshal(stdout.Bytes(), &report); err != nil {
+		t.Fatal(err)
+	}
+	if len(report.Series) != 1 || report.Series[0].Error != "" || len(report.Series[0].NewChapters) != 3 {
+		t.Fatalf("report=%+v", report)
+	}
+	if imageHits.Load() != 0 || !reflect.DeepEqual(before, snapshotUpdateFiles(t, root)) {
+		t.Fatal("check downloaded or wrote files without state")
+	}
+}
+
+func TestUpdateReportsInvalidStateWithoutOverwritingIt(t *testing.T) {
+	var imageHits atomic.Int32
+	server := updateFixtureServer(t, &imageHits)
+	defer server.Close()
+	root := t.TempDir()
+	writeImage(t, filepath.Join(root, "broken", "chapter-001"), "001.jpg", validJPEG)
+	if err := storeWrite(t, filepath.Join(root, "broken", ".state.json"), "not JSON"); err != nil {
+		t.Fatal(err)
+	}
+	if err := storeWrite(t, filepath.Join(root, "fixture", ".state.json"), `{"done":[1,2,3]}`); err != nil {
+		t.Fatal(err)
+	}
+	before := snapshotUpdateFiles(t, root)
+	deps := Dependencies{HTTP: server.Client(), BaseURL: server.URL, ConfigPath: isolatedCLIConfig(t)}
+	var stdout, stderr bytes.Buffer
+	if code := Main(context.Background(), []string{"update", "--out", root, "--json"}, &stdout, &stderr, deps); code != 0 {
+		t.Fatalf("update code=%d stderr=%s", code, stderr.String())
+	}
+	var report UpdateReport
+	if err := json.Unmarshal(stdout.Bytes(), &report); err != nil {
+		t.Fatal(err)
+	}
+	if len(report.Series) != 2 || report.Series[0].Slug != "broken" || !strings.Contains(report.Series[0].Error, "decode state") || report.Series[1].Slug != "fixture" || report.Series[1].Skipped != 3 || report.Series[1].Error != "" {
+		t.Fatalf("report=%+v", report)
+	}
+	if !reflect.DeepEqual(before, snapshotUpdateFiles(t, root)) {
+		t.Fatal("update changed files after a state error")
+	}
 }

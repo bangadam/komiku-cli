@@ -103,7 +103,7 @@ func (m model) layoutWidths() (int, int) {
 }
 
 func (m model) sidebarLines() []string {
-	lines := []string{m.heading("komiku-cli"), ""}
+	lines := []string{m.heading("komiku-cli")}
 	for index, label := range navLabels {
 		if index == m.nav {
 			lines = append(lines, m.accent("> "+label))
@@ -111,7 +111,7 @@ func (m model) sidebarLines() []string {
 			lines = append(lines, "  "+label)
 		}
 	}
-	lines = append(lines, "", "Tab/ShiftTab nav")
+	lines = append(lines, "Tab/ShiftTab nav")
 	if m.outputRoot != "" {
 		lines = append(lines, "", "Save to:", m.outputRoot)
 	}
@@ -173,6 +173,17 @@ func (m model) downloadsView() []string {
 		lines = append(lines, "", "[ERROR] "+m.err.Error())
 	}
 	return append(lines, "", "Up/Down move  Enter pack  Esc rescan  q quit")
+}
+
+func humanBytes(n int64) string {
+	switch {
+	case n >= 1<<20:
+		return fmt.Sprintf("%.1f MiB", float64(n)/(1<<20))
+	case n >= 1<<10:
+		return fmt.Sprintf("%.1f KiB", float64(n)/(1<<10))
+	default:
+		return fmt.Sprintf("%d B", n)
+	}
 }
 
 func (m model) packSeriesView() []string {
@@ -303,6 +314,9 @@ func (m model) chaptersView() []string {
 	}
 	if m.groupLoaded && m.flat {
 		layout += "; complete Wikipedia volumes auto-map on Enter (r flat stays flat)"
+	}
+	if m.flat {
+		layout += "; packs as one Chapters X-Y archive without a volume mapping"
 	}
 	tail := []string{"", fmt.Sprintf("Selected %d/%d  Layout %s", m.selectedCount(), len(m.chapters), layout)}
 	if !m.flat {

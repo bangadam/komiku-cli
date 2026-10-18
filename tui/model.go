@@ -626,6 +626,8 @@ func (m model) Update(message tea.Msg) (tea.Model, tea.Cmd) {
 					return m.switchNav(2)
 				case "4":
 					return m.switchNav(3)
+				case "5":
+					return m.switchNav(4)
 				}
 			}
 		}
@@ -805,15 +807,17 @@ func (m model) updateStandalonePackDone(key tea.KeyMsg) (tea.Model, tea.Cmd) {
 	return m, nil
 }
 
+const settingsRows = 3
+
 func (m model) updateSettings(key tea.KeyMsg) (tea.Model, tea.Cmd) {
 	switch key.String() {
 	case "down":
-		m.settingsCursor = (m.settingsCursor + 1) % 3
+		m.settingsCursor = (m.settingsCursor + 1) % settingsRows
 		m.syncSettingsFocus()
 		m.err = nil
 		return m, textinput.Blink
 	case "up":
-		m.settingsCursor = (m.settingsCursor + 2) % 3
+		m.settingsCursor = (m.settingsCursor + settingsRows - 1) % settingsRows
 		m.syncSettingsFocus()
 		m.err = nil
 		return m, textinput.Blink
@@ -872,10 +876,10 @@ func (m model) updateSettings(key tea.KeyMsg) (tea.Model, tea.Cmd) {
 			return m, tea.Quit
 		}
 	}
-	if m.settingsCursor == 0 {
-		m.outputInput.Focus()
+	if input := m.settingsInputFor(m.settingsCursor); input != nil {
+		input.Focus()
 		var cmd tea.Cmd
-		m.outputInput, cmd = m.outputInput.Update(key)
+		*input, cmd = input.Update(key)
 		m.err = nil
 		return m, cmd
 	}
@@ -883,11 +887,21 @@ func (m model) updateSettings(key tea.KeyMsg) (tea.Model, tea.Cmd) {
 	return m, nil
 }
 
+func (m *model) settingsInputFor(cursor int) *textinput.Model {
+	switch cursor {
+	case 0:
+		return &m.outputInput
+	}
+	return nil
+}
+
 func (m *model) syncSettingsFocus() {
-	if m.settingsCursor == 0 {
-		m.outputInput.Focus()
-	} else {
-		m.outputInput.Blur()
+	inputs := []*textinput.Model{&m.outputInput}
+	for _, input := range inputs {
+		input.Blur()
+	}
+	if input := m.settingsInputFor(m.settingsCursor); input != nil {
+		input.Focus()
 	}
 }
 
@@ -1299,20 +1313,16 @@ func (m *model) resetToFlatSelection() {
 
 func (m model) startDownload() (tea.Model, tea.Cmd) {
 	if m.flat {
-		switch {
-		case m.explicitFlat:
-			m.packUnavailableReason = "Pack unavailable: explicit flat layout was selected with r."
-		case m.groupLoaded:
+		// Flat without a complete Wikipedia selection still packs as one
+		// "Chapters X-Y" archive, so no gate is needed; only promote
+		// when the selection does match complete Wikipedia volumes.
+		if !m.explicitFlat && m.groupLoaded {
 			resolved, err := cli.ResolveCompleteVolumeSelection(m.chapters, m.selected, m.groupMappings)
-			if err != nil {
-				m.packUnavailableReason = "Pack unavailable: selection is not complete Wikipedia volumes: " + err.Error() + "."
-			} else {
+			if err == nil {
 				m.applyVolumeJobs(resolved.Jobs, resolved.Mappings)
 				m.mappingProvenance = "wikipedia-display"
 				m.message = fmt.Sprintf("Promoted %d complete Wikipedia volume(s) to mapped download layout.", len(resolved.Mappings))
 			}
-		default:
-			m.packUnavailableReason = "Pack unavailable: select complete Wikipedia volumes with v, or choose a mapped layout with r."
 		}
 	}
 	jobs := m.selectedJobs()

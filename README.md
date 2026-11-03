@@ -405,3 +405,7 @@ CLI output rather than mocks.
 This project is an independent client and is not affiliated with Komiku.
 Follow the source website's terms and applicable law. Download only content
 you are authorized to access.
+
+## License
+
+Released under the [MIT License](LICENSE).

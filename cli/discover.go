@@ -192,6 +192,15 @@ func NewCatalogCommand(dependencies Dependencies) *cobra.Command {
 }
 
 func runCatalog(ctx context.Context, letter, kind, status string, page int, asJSON bool, stdout io.Writer, dependencies Dependencies) error {
+	want := ""
+	if status != "" {
+		want = komiku.NormalizeStatus(status)
+		switch want {
+		case "Completed", "Ongoing", "Hiatus":
+		default:
+			return fmt.Errorf("catalog: unknown status %q: use ongoing, completed, or hiatus", status)
+		}
+	}
 	client := dependencies.newKomikuClient(0)
 	report, err := client.Catalog(ctx, letter, kind, status, page)
 	if err != nil {
@@ -200,6 +209,18 @@ func runCatalog(ctx context.Context, letter, kind, status string, page int, asJS
 	report.Letter = letter
 	report.Type = kind
 	report.Status = status
+	if want != "" {
+		// komiku.org ignores the status parameter, so the filter is applied
+		// to the fetched page here; totals describe the matches shown.
+		kept := make([]komiku.DiscoverySeries, 0, len(report.Series))
+		for _, entry := range report.Series {
+			if komiku.NormalizeStatus(entry.Status) == want {
+				kept = append(kept, entry)
+			}
+		}
+		report.Series = kept
+		report.Total = len(kept)
+	}
 	if asJSON {
 		return writeJSON(stdout, report)
 	}

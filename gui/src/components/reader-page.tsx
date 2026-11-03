@@ -70,7 +70,7 @@ export function ReaderPageView({
         setImage({ key: identity, source: result.source, width: probe.naturalWidth, height: probe.naturalHeight })
       }
     }).catch((error: unknown) => {
-      if (!cancelled) setFailure({ key: identity, message: error instanceof Error ? error.message : "Gambar tidak valid." })
+      if (!cancelled) setFailure({ key: identity, message: error instanceof Error ? error.message : "Invalid image." })
     })
     return () => { cancelled = true; release?.() }
   }, [armed, identity, page.local])
@@ -90,7 +90,7 @@ export function ReaderPageView({
         <div className={cn("flex", !strip && "min-h-full min-w-full")} style={{ width: Math.max(width, dimensions.width), minHeight: strip ? dimensions.height : viewportHeight }}>
           <img
             src={current.source}
-            alt={`Halaman ${page.index}`}
+            alt={`Page ${page.index}`}
             data-page-image={page.index}
             width={dimensions.width}
             height={dimensions.height}
@@ -105,16 +105,16 @@ export function ReaderPageView({
           {failed ? (
             <>
               <TriangleAlert className="size-5 text-danger" aria-hidden="true" />
-              <span className="text-sm text-foreground">Halaman {page.index} belum tersedia</span>
-              <span className="max-w-sm break-words text-xs text-muted-foreground">{page.error || failureMessage || "Halaman belum tersimpan di perangkat ini."}</span>
+              <span className="text-sm text-foreground">Page {page.index} is not available yet</span>
+              <span className="max-w-sm break-words text-xs text-muted-foreground">{page.error || failureMessage || "This page is not saved on this device yet."}</span>
               <button type="button" onClick={onRetry} className="inline-flex min-h-9 items-center gap-2 rounded-md border border-border bg-surface px-3 text-xs text-foreground hover:bg-muted focus-visible:outline-2 focus-visible:outline-primary">
-                <RotateCcw className="size-3.5" /> Coba lagi halaman {page.index}
+                <RotateCcw className="size-3.5" /> Retry page {page.index}
               </button>
             </>
           ) : (
             <>
               <Loader2 className="size-5 animate-spin text-muted-foreground motion-reduce:animate-none" aria-hidden="true" />
-              <span className="text-xs text-muted-foreground">Menyiapkan halaman {page.index}…</span>
+              <span className="text-xs text-muted-foreground">Preparing page {page.index}…</span>
             </>
           )}
         </div>

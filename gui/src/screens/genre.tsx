@@ -24,9 +24,9 @@ import { cn } from "@/lib/utils"
 type SortKey = "popular" | "latest" | "title"
 
 const sortOptions: { id: SortKey; label: string }[] = [
-  { id: "popular", label: "Populer" },
-  { id: "latest", label: "Terbaru" },
-  { id: "title", label: "Judul A–Z" },
+  { id: "popular", label: "Popular" },
+  { id: "latest", label: "Latest" },
+  { id: "title", label: "Title A–Z" },
 ]
 
 /** Quick collections must exist in the real genre index to be clickable. */
@@ -115,7 +115,7 @@ export function GenreScreen({
       <DiscoveryBar icon={Tags} label="Genre" crumb={currentGenre?.name ?? genre}>
         <BarMeta icon={Tags}>
           {formatCount(genreList.length)} genre ·{" "}
-          {formatCount(currentGenre?.count ?? 0)} judul
+          {formatCount(currentGenre?.count ?? 0)} titles
         </BarMeta>
       </DiscoveryBar>
 
@@ -123,10 +123,10 @@ export function GenreScreen({
         <div className="flex items-start gap-4">
           <div className="flex min-w-0 flex-col gap-1.5">
             <h1 className="text-[30px] font-semibold leading-[1.1] tracking-[-0.02em]">
-              Daftar Genre
+              Genre Catalogue
             </h1>
             <p className="text-[13px] text-muted-foreground">
-              Pilih genre untuk melihat judul, atau gabungkan dua genre sekaligus
+              Pick a genre to browse titles, or combine two genres at once
             </p>
           </div>
           <div className="flex-1" />
@@ -135,8 +135,8 @@ export function GenreScreen({
             <input
               value={search}
               onChange={(event) => setSearch(event.target.value)}
-              placeholder="Cari genre…"
-              aria-label="Cari genre"
+              placeholder="Search genres…"
+              aria-label="Search genres"
               spellCheck={false}
               className="min-w-0 flex-1 bg-transparent text-[12px] outline-none placeholder:text-dim"
             />
@@ -146,10 +146,10 @@ export function GenreScreen({
         {/* Combine bar */}
         <div className="mt-5 flex flex-wrap items-center gap-2 rounded-[8px] border border-border-subtle bg-surface px-3.5 py-3">
           <Layers className="size-[15px] shrink-0 text-dim" strokeWidth={1.8} />
-          <span className="text-[12px] font-medium">Gabungkan</span>
+          <span className="text-[12px] font-medium">Combine</span>
 
           <select
-            aria-label="Genre pertama"
+            aria-label="First genre"
             value={genre}
             onChange={(event) => chooseGenre(event.target.value)}
             className="h-7 rounded-[5px] border border-border bg-card px-2 text-[11px] text-foreground outline-none focus:border-primary/60"
@@ -164,12 +164,12 @@ export function GenreScreen({
           <Plus className="size-3 shrink-0 text-dim" strokeWidth={1.8} />
 
           <select
-            aria-label="Genre kedua"
+            aria-label="Second genre"
             value={secondGenre}
             onChange={(event) => setSecondGenre(event.target.value)}
             className="h-7 rounded-[5px] border border-border bg-card px-2 text-[11px] text-foreground outline-none focus:border-primary/60"
           >
-            <option value="">Genre 2 (opsional)</option>
+            <option value="">Genre 2 (optional)</option>
             {visibleGenres
               .filter((entry) => entry.slug !== genre)
               .map((entry) => (
@@ -182,7 +182,7 @@ export function GenreScreen({
           <div className="flex-1" />
 
           <span className="font-mono text-[10px] text-dim">
-            {formatCount(rows.length)} judul di halaman ini
+            {formatCount(rows.length)} titles on this page
           </span>
 
           <button
@@ -191,13 +191,13 @@ export function GenreScreen({
             disabled={!secondGenre || secondGenre === genre}
             className="h-7 rounded-[5px] bg-primary px-2.5 text-[11px] font-medium text-primary-foreground transition-opacity hover:opacity-90 disabled:opacity-40"
           >
-            Terapkan
+            Apply
           </button>
           {appliedSecond && (
             <button
               type="button"
               onClick={clearCombo}
-              aria-label="Hapus kombinasi"
+              aria-label="Clear combination"
               className="flex size-7 items-center justify-center rounded-[5px] text-dim transition-colors hover:text-foreground"
             >
               <X className="size-3.5" strokeWidth={1.8} />
@@ -207,7 +207,7 @@ export function GenreScreen({
 
         <div className="mt-4 flex flex-wrap items-center gap-1.5">
           <span className="text-[10px] font-semibold tracking-[0.08em] text-dim">
-            URUTKAN
+            SORT
           </span>
           <SegmentedControl
             options={sortOptions}
@@ -223,7 +223,7 @@ export function GenreScreen({
               ? `${currentGenre?.name ?? genre} + ${second?.name ?? appliedSecond}`
               : `${currentGenre?.name ?? genre} · ${formatCount(
                   currentGenre?.count
-                )} judul`}
+                )} titles`}
           </span>
         </div>
 
@@ -231,7 +231,7 @@ export function GenreScreen({
           <div className="flex min-w-0 flex-1 flex-col">
             {listing.loading && !listing.data ? (
               <div className="flex flex-1 flex-col overflow-hidden rounded-[8px] border border-border-subtle bg-surface">
-                <LoadingState label="Membaca judul genre…" />
+                <LoadingState label="Reading genre titles…" />
               </div>
             ) : listing.error ? (
               <div className="flex flex-1 flex-col overflow-hidden rounded-[8px] border border-border-subtle bg-surface">
@@ -240,8 +240,8 @@ export function GenreScreen({
             ) : rows.length === 0 ? (
               <div className="flex flex-1 flex-col overflow-hidden rounded-[8px] border border-border-subtle bg-surface">
                 <EmptyState
-                  title="Tidak ada judul"
-                  hint="Coba genre lain atau hapus kombinasi."
+                  title="No titles"
+                  hint="Try another genre or clear the combination."
                   icon={Filter}
                 />
               </div>
@@ -290,7 +290,7 @@ export function GenreScreen({
           <aside className="flex w-[300px] shrink-0 flex-col gap-3.5 overflow-y-auto">
             <div className="flex flex-col gap-2.5 rounded-[8px] border border-border-subtle bg-surface p-4">
               <div className="flex items-center gap-2">
-                <span className="text-[12px] font-semibold">Genre populer</span>
+                <span className="text-[12px] font-semibold">Popular genres</span>
                 <div className="flex-1" />
                 <span className="font-mono text-[10px] text-dim">
                   {genreList.length} genre
@@ -318,13 +318,13 @@ export function GenreScreen({
                   </button>
                 ))}
                 {genres.loading && popular.length === 0 && (
-                  <span className="text-[11px] text-dim">Memuat genre…</span>
+                  <span className="text-[11px] text-dim">Loading genres…</span>
                 )}
               </div>
             </div>
 
             <div className="flex flex-col gap-2 rounded-[8px] border border-border-subtle bg-surface p-4">
-              <span className="text-[12px] font-semibold">Koleksi cepat</span>
+              <span className="text-[12px] font-semibold">Quick collections</span>
               {quickCollections.map((entry) => {
                 const found = genreList.find((item) => item.slug === entry.slug)
                 return (
@@ -339,7 +339,7 @@ export function GenreScreen({
                       {entry.label}
                     </span>
                     <span className="shrink-0 font-mono text-[10px] text-dim">
-                      {found ? `${formatCount(found.count)} judul` : "—"}
+                      {found ? `${formatCount(found.count)} titles` : "—"}
                     </span>
                   </button>
                 )
@@ -348,8 +348,8 @@ export function GenreScreen({
 
             <div className="rounded-[7px] bg-muted p-2.5">
               <p className="text-[10px] leading-relaxed text-dim">
-                Kombinasi dua genre memakai filter genre ganda dari komiku.org.
-                Urutan hasil mengikuti situs.
+                Combining two genres uses komiku.org's double-genre filter.
+                Results keep the site order.
               </p>
             </div>
           </aside>
@@ -362,16 +362,16 @@ export function GenreScreen({
             disabled={page <= 1}
             className="h-7 rounded-[5px] border border-border-subtle px-2.5 text-[11px] text-muted-foreground transition-colors hover:text-foreground disabled:opacity-40"
           >
-            Sebelumnya
+            Previous
           </button>
-          <span className="font-mono text-[10px] text-dim">halaman {page}</span>
+          <span className="font-mono text-[10px] text-dim">page {page}</span>
           <button
             type="button"
             onClick={() => setPage((value) => value + 1)}
             disabled={rows.length === 0}
             className="h-7 rounded-[5px] border border-border-subtle px-2.5 text-[11px] text-muted-foreground transition-colors hover:text-foreground disabled:opacity-40"
           >
-            Berikutnya
+            Next
           </button>
           <div className="flex-1" />
           <RefreshButton busy={listing.loading} onClick={listing.reload} />

@@ -22,22 +22,22 @@ import {
 import { useAsync } from "@/lib/use-async"
 
 const periodOptions: { id: TrendingPeriod; label: string }[] = [
-  { id: "daily", label: "24 jam" },
-  { id: "weekly", label: "7 hari" },
-  { id: "monthly", label: "30 hari" },
+  { id: "daily", label: "24 hours" },
+  { id: "weekly", label: "7 days" },
+  { id: "monthly", label: "30 days" },
 ]
 
 const windowLabel: Record<TrendingPeriod, string> = {
-  daily: "24 jam",
-  weekly: "7 hari",
-  monthly: "30 hari",
+  daily: "24 hours",
+  weekly: "7 days",
+  monthly: "30 days",
   active: "realtime",
 }
 
 type TypeFilter = "" | "manga" | "manhwa" | "manhua"
 
 const typeOptions: { id: TypeFilter; label: string }[] = [
-  { id: "", label: "Semua" },
+  { id: "", label: "All" },
   { id: "manga", label: "Manga" },
   { id: "manhwa", label: "Manhwa" },
   { id: "manhua", label: "Manhua" },
@@ -106,8 +106,7 @@ export function TrendingScreen({
               Trending Now
             </h1>
             <p className="text-[13px] text-muted-foreground">
-              Judul yang paling banyak dibaca dalam {windowLabel[period]}{" "}
-              terakhir
+              Most-read titles in the last {windowLabel[period]}
             </p>
           </div>
           <div className="flex-1" />
@@ -129,7 +128,7 @@ export function TrendingScreen({
           ))}
           <div className="flex-1" />
           <span className="font-mono text-[11px] text-dim">
-            {rows.length} judul
+            {rows.length} titles
           </span>
         </div>
 
@@ -137,7 +136,7 @@ export function TrendingScreen({
           <div className="flex min-w-0 flex-1 flex-col gap-4">
             {trending.loading && !trending.data ? (
               <div className="flex flex-1 flex-col overflow-hidden rounded-[8px] border border-border-subtle bg-surface">
-                <LoadingState label="Membaca data trending…" />
+                <LoadingState label="Reading trending data…" />
               </div>
             ) : trending.error ? (
               <div className="flex flex-1 flex-col overflow-hidden rounded-[8px] border border-border-subtle bg-surface">
@@ -146,8 +145,8 @@ export function TrendingScreen({
             ) : !hero ? (
               <div className="flex flex-1 flex-col overflow-hidden rounded-[8px] border border-border-subtle bg-surface">
                 <EmptyState
-                  title="Tidak ada judul trending"
-                  hint="Coba filter tipe lain."
+                  title="No trending titles"
+                  hint="Try another type filter."
                   icon={TrendingUp}
                 />
               </div>
@@ -204,7 +203,7 @@ export function TrendingScreen({
                         <span className="font-mono text-[17px] font-semibold leading-none">
                           #{hero.rank}
                         </span>
-                        <span className="text-[10px] text-dim">Peringkat</span>
+                        <span className="text-[10px] text-dim">Rank</span>
                       </div>
                     </div>
 
@@ -214,7 +213,7 @@ export function TrendingScreen({
                         className="h-8 px-3 text-[12px]"
                         onClick={() => onOpenSeries(hero.slug, hero.url)}
                       >
-                        Buka series
+                        Open series
                       </Button>
                     </div>
                   </div>
@@ -224,11 +223,11 @@ export function TrendingScreen({
                 <div className="flex flex-col gap-2.5">
                   <div className="flex items-center gap-2">
                     <h2 className="text-[16px] font-semibold">
-                      Trending berikutnya
+                      Up next in Trending
                     </h2>
                     <div className="flex-1" />
                     <span className="font-mono text-[10px] text-dim">
-                      {rest.length} judul
+                      {rest.length} titles
                     </span>
                   </div>
                   <div className="grid grid-cols-4 gap-3">
@@ -274,7 +273,7 @@ export function TrendingScreen({
             <div className="flex flex-col gap-3 rounded-[8px] border border-border-subtle bg-surface p-4">
               <div className="flex items-center gap-2">
                 <span className="text-[12px] font-semibold">
-                  Genre paling panas
+                  Hottest genres
                 </span>
                 <div className="flex-1" />
                 <span className="font-mono text-[10px] text-dim">
@@ -303,12 +302,12 @@ export function TrendingScreen({
                 ))
               )}
               <span className="text-[10px] leading-relaxed text-dim">
-                Porsi judul trending yang memuat genre tersebut.
+                Share of trending titles that carry this genre.
               </span>
             </div>
 
             <div className="flex flex-col gap-2.5 rounded-[8px] border border-border-subtle bg-surface p-4">
-              <span className="text-[12px] font-semibold">Views tertinggi</span>
+              <span className="text-[12px] font-semibold">Top views</span>
               {topViews.map((entry) => (
                 <button
                   key={entry.slug}
@@ -328,8 +327,8 @@ export function TrendingScreen({
 
             <div className="rounded-[7px] bg-muted p-2.5">
               <p className="text-[10px] leading-relaxed text-dim">
-                Trending diambil dari analytics komiku.org. Buka series untuk
-                memilih chapter yang ingin diunduh.
+                Trending comes from komiku.org analytics. Open a series to
+                pick the chapters you want to download.
               </p>
             </div>
           </aside>

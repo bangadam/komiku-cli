@@ -3,7 +3,7 @@ import { RefreshCw } from "lucide-react"
 
 import { cn } from "@/lib/utils"
 import { gradientFor, initialsFromTitle } from "@/lib/api"
-import { typeLabel } from "@/lib/discovery"
+import { formatUpdated, typeLabel } from "@/lib/discovery"
 
 /**
  * Remote cover image with a deterministic gradient fallback. Discovery pages
@@ -54,7 +54,7 @@ export function RemoteCover({
   )
 }
 
-/** Rank number tile used by the Peringkat board. */
+/** Rank number tile used by the Rankings board. */
 export function RankBadge({
   rank,
   className,
@@ -163,7 +163,7 @@ export function LetterTile({
   )
 }
 
-/** "BARU" flag for recently added or updated titles. */
+/** "NEW" flag for recently added or updated titles. */
 export function NewFlag({ className }: { className?: string }) {
   return (
     <span
@@ -172,12 +172,12 @@ export function NewFlag({ className }: { className?: string }) {
         className
       )}
     >
-      BARU
+      NEW
     </span>
   )
 }
 
-/** Relative time chip ("2 jam lalu"). */
+/** Relative time chip ("2 h ago"). */
 export function TimeChip({
   value,
   className,
@@ -193,7 +193,7 @@ export function TimeChip({
         className
       )}
     >
-      {value}
+      {formatUpdated(value)}
     </span>
   )
 }

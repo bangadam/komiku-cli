@@ -21,19 +21,19 @@ import { useAsync } from "@/lib/use-async"
 import { cn } from "@/lib/utils"
 
 type TypeFilter = "" | "manga" | "manhwa" | "manhua"
-type StatusFilter = "" | "ongoing" | "tamat"
+type StatusFilter = "" | "ongoing" | "completed"
 
 const typeOptions: { id: TypeFilter; label: string }[] = [
-  { id: "", label: "Semua" },
+  { id: "", label: "All" },
   { id: "manga", label: "Manga" },
   { id: "manhwa", label: "Manhwa" },
   { id: "manhua", label: "Manhua" },
 ]
 
 const statusOptions: { id: StatusFilter; label: string }[] = [
-  { id: "", label: "Semua status" },
+  { id: "", label: "All statuses" },
   { id: "ongoing", label: "Ongoing" },
-  { id: "tamat", label: "Tamat" },
+  { id: "completed", label: "Completed" },
 ]
 
 /** Compact page window: 1 … n-1 n n+1 … last */
@@ -100,11 +100,11 @@ export function CatalogScreen({
     <div className="flex h-full flex-col overflow-hidden">
       <DiscoveryBar
         icon={List}
-        label="Daftar Komik"
+        label="Comic Catalogue"
         crumb={letter === "All" ? "A–Z" : letter}
       >
         <BarMeta icon={List}>
-          {formatCount(totals.data?.all)} komik · {totalPages} halaman
+          {formatCount(totals.data?.all)} comics · {totalPages} pages
         </BarMeta>
       </DiscoveryBar>
 
@@ -112,10 +112,10 @@ export function CatalogScreen({
         <div className="flex items-start gap-4">
           <div className="flex min-w-0 flex-col gap-1.5">
             <h1 className="text-[30px] font-semibold leading-[1.1] tracking-[-0.02em]">
-              Daftar Komik
+              Comic Catalogue
             </h1>
             <p className="text-[13px] text-muted-foreground">
-              Semua judul, diurutkan alfabetis
+              All titles, sorted A–Z
             </p>
           </div>
           <div className="flex-1" />
@@ -124,8 +124,8 @@ export function CatalogScreen({
             <input
               value={filter}
               onChange={(event) => setFilter(event.target.value)}
-              placeholder="Filter dalam daftar…"
-              aria-label="Filter dalam daftar"
+              placeholder="Filter this list…"
+              aria-label="Filter this list"
               spellCheck={false}
               className="min-w-0 flex-1 bg-transparent text-[12px] outline-none placeholder:text-dim"
             />
@@ -136,10 +136,10 @@ export function CatalogScreen({
         <div className="mt-5 flex flex-col gap-2">
           <div className="flex items-center gap-2">
             <span className="text-[10px] font-semibold tracking-[0.08em] text-dim">
-              INDEKS
+              INDEX
             </span>
             <span className="text-[10px] text-dim">
-              Angka di bawah huruf = jumlah judul
+              Number under each letter = title count
             </span>
             <div className="h-px flex-1 bg-border-subtle" />
           </div>
@@ -183,21 +183,21 @@ export function CatalogScreen({
           <div className="flex-1" />
           <span className="font-mono text-[11px] text-dim">
             {filter
-              ? `${rows.length} dari ${report?.series?.length ?? 0} judul`
-              : `Menampilkan ${letter === "All" ? "semua" : letter} · ${formatCount(
+              ? `${rows.length} of ${report?.series?.length ?? 0} titles`
+              : `Showing ${letter === "All" ? "all" : letter} · ${formatCount(
                   report?.total
-                )} judul`}
+                )} titles`}
           </span>
         </div>
 
         {catalog.loading && !catalog.data ? (
-          <LoadingState label="Membaca katalog…" />
+          <LoadingState label="Reading the catalogue…" />
         ) : catalog.error ? (
           <ErrorState message={catalog.error} onRetry={catalog.reload} />
         ) : rows.length === 0 ? (
           <EmptyState
-            title="Tidak ada judul"
-            hint="Coba huruf atau filter lain."
+            title="No titles"
+            hint="Try another letter or filter."
             icon={List}
           />
         ) : (
@@ -230,7 +230,7 @@ export function CatalogScreen({
                   <span
                     className={cn(
                       "mt-auto text-[10px]",
-                      entry.status?.toLowerCase() === "tamat"
+                      entry.status?.toLowerCase() === "completed"
                         ? "text-success"
                         : "text-dim"
                     )}
@@ -245,13 +245,13 @@ export function CatalogScreen({
 
         {totalPages > 1 && (
           <div className="mt-5 flex items-center gap-2">
-            <span className="font-mono text-[11px] text-dim">Halaman</span>
+            <span className="font-mono text-[11px] text-dim">Page</span>
             <div className="flex items-center gap-1">
               <button
                 type="button"
                 onClick={() => setPage((value) => Math.max(1, value - 1))}
                 disabled={(report?.page ?? 1) <= 1}
-                aria-label="Halaman sebelumnya"
+                aria-label="Previous page"
                 className="flex size-7 items-center justify-center rounded-[5px] border border-border-subtle text-dim transition-colors hover:text-foreground disabled:opacity-40"
               >
                 <ChevronLeft className="size-3.5" strokeWidth={1.8} />
@@ -287,7 +287,7 @@ export function CatalogScreen({
                   setPage((value) => Math.min(totalPages, value + 1))
                 }
                 disabled={(report?.page ?? 1) >= totalPages}
-                aria-label="Halaman berikutnya"
+                aria-label="Next page"
                 className="flex size-7 items-center justify-center rounded-[5px] border border-border-subtle text-dim transition-colors hover:text-foreground disabled:opacity-40"
               >
                 <ChevronRight className="size-3.5" strokeWidth={1.8} />

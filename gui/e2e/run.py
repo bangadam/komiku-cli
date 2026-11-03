@@ -121,11 +121,11 @@ def stop_server(process: subprocess.Popen) -> None:
 NAV_IDS = {
     "Library": "library",
     "Search": "search",
-    "Terbaru": "terbaru",
-    "Peringkat": "peringkat",
+    "Latest": "terbaru",
+    "Rankings": "peringkat",
     "Trending": "trending",
-    "Baru": "baru",
-    "Daftar Komik": "daftar",
+    "New": "baru",
+    "Comic Catalogue": "daftar",
     "Genre": "genre",
     "Downloads": "downloads",
     "Pack to CBZ": "pack",
@@ -182,14 +182,14 @@ def test_shell(page: Page) -> None:
 
     body = page.locator("body").inner_text()
     check_no_subscription_ui("sidebar", body)
-    for heading in ["LIBRARY", "JELAJAHI", "TOOLS", "COLLECTIONS"]:
+    for heading in ["LIBRARY", "EXPLORE", "TOOLS", "COLLECTIONS"]:
         check(f"sidebar group: {heading}", heading in body, body[:400])
     for label in [
-        "Terbaru",
-        "Peringkat",
+        "Latest",
+        "Rankings",
         "Trending",
-        "Baru",
-        "Daftar Komik",
+        "New",
+        "Comic Catalogue",
         "Genre",
         "Downloads",
         "Pack to CBZ",
@@ -390,13 +390,13 @@ def test_downloads(page: Page) -> None:
 
 
 def test_peringkat(page: Page) -> None:
-    goto(page, "Peringkat")
+    goto(page, "Rankings")
     body = wait_for_text(page, r"Chapter \d")
     check("peringkat rows load", bool(re.search(r"Chapter \d", body)))
-    check("peringkat title", "Peringkat Komiku" in body, body[:300])
-    check("peringkat period switch", "Harian" in body and "Mingguan" in body)
+    check("peringkat title", "Komiku Rankings" in body, body[:300])
+    check("peringkat period switch", "Daily" in body and "Weekly" in body)
     check("peringkat rows", "Black Clover" in body or "Overgeared" in body, body[:600])
-    check("peringkat rail", "Sebaran tipe" in body)
+    check("peringkat rail", "Type mix" in body)
     check(
         "peringkat type mix is populated",
         bool(re.search(r"Man(?:g|h)wa", body)),
@@ -405,10 +405,10 @@ def test_peringkat(page: Page) -> None:
     check("peringkat source note", "komiku.org" in body)
 
     rows_before = page.locator("main button").count()
-    page.locator('[data-value="mingguan"]').first.click()
+    page.locator('[data-value="weekly"]').first.click()
     page.wait_for_timeout(3500)
     body = page.locator("body").inner_text()
-    check("peringkat period switch loads data", "Mingguan" in body and rows_before > 0, body[:300])
+    check("peringkat period switch loads data", "Weekly" in body and rows_before > 0, body[:300])
 
 
 def test_trending(page: Page) -> None:
@@ -416,58 +416,58 @@ def test_trending(page: Page) -> None:
     body = wait_for_text(page, r"#1 Trending")
     check("trending title", "Trending Now" in body, body[:300])
     check("trending hero badge", "#1 Trending" in body, body[:600])
-    check("trending shelf", "Trending berikutnya" in body, body[:900])
-    check("trending rail genres", "Genre paling panas" in body)
+    check("trending shelf", "Up next in Trending" in body, body[:900])
+    check("trending rail genres", "Hottest genres" in body)
     check("trending views", "Views" in body)
     check_no_subscription_ui("trending", body)
     check("trending has no saved-library action", "Tambah ke library" not in body and "Sudah di library" not in body)
 
 
 def test_terbaru(page: Page) -> None:
-    goto(page, "Terbaru")
-    body = wait_for_text(page, r"(KURANG DARI 3 JAM|HARI INI|MINGGU INI)")
-    check("terbaru title", "Update Terbaru" in body, body[:300])
-    check("terbaru tabs", "Chapter terbaru" in body and "Komik terbaru" in body and "Acak" in body)
+    goto(page, "Latest")
+    body = wait_for_text(page, r"(LESS THAN 3 HOURS|TODAY|THIS WEEK)")
+    check("terbaru title", "Latest Updates" in body, body[:300])
+    check("terbaru tabs", "Latest chapters" in body and "Latest comics" in body and "Random" in body)
     check(
         "terbaru groups",
-        bool(re.search(r"(KURANG DARI 3 JAM|HARI INI|MINGGU INI)", body)),
+        bool(re.search(r"(LESS THAN 3 HOURS|TODAY|THIS WEEK)", body)),
         body[:900],
     )
     check_no_subscription_ui("terbaru", body)
-    check("terbaru rhythm", "Ritme update" in body)
+    check("terbaru rhythm", "Update rhythm" in body)
     check("terbaru auto refresh", "Auto-refresh 60s" in body)
 
-    page.get_by_role("button", name="Komik terbaru").first.click()
+    page.get_by_role("button", name="Latest comics").first.click()
     page.wait_for_timeout(4000)
     body = page.locator("body").inner_text()
-    check("terbaru new tab loads", "Update Terbaru" in body and "judul" in body, body[:400])
+    check("terbaru new tab loads", "Latest Updates" in body and "titles" in body, body[:400])
 
 
 def test_baru(page: Page) -> None:
-    goto(page, "Baru")
+    goto(page, "New")
     loaded = wait_for_selector(page, "main button[data-series]")
     # Catalogue totals come from four live requests; wait until they land.
-    body = wait_for_text(page, r"(Semua|Manga)\s*[1-9][\d.]{2,}")
-    check("baru title", "Baru Ditambahkan" in body, body[:300])
+    body = wait_for_text(page, r"(All|Manga)\s*[1-9][\d.]{2,}")
+    check("baru title", "Recently Added" in body, body[:300])
     check("baru tabs with counts", "Manga" in body and "Manhwa" in body and "Manhua" in body)
     check("baru grid opens series", loaded and page.locator("main button[data-series]").count() > 0, body[:900])
     check_no_subscription_ui("baru", body)
     check("baru has no saved-library action", "Tambah ke library" not in body and "Sudah di library" not in body)
-    check("baru week label", "Minggu ini" in body)
+    check("baru week label", "This week" in body)
     # Type tabs must show real catalogue totals, not zeros.
-    counts = re.findall(r"(Semua|Manga|Manhwa|Manhua)\s*([\d.]+)", body)
+    counts = re.findall(r"(All|Manga|Manhwa|Manhua)\s*([\d.]+)", body)
     nonzero = [value for _, value in counts if value not in ("0", "")]
     check("baru type counts are real", len(nonzero) >= 2, str(counts[:6]))
 
 
 def test_daftar(page: Page) -> None:
-    goto(page, "Daftar Komik")
+    goto(page, "Comic Catalogue")
     wait_for_selector(page, '[data-letter="A"]')
-    body = wait_for_text(page, r"Menampilkan")
-    check("daftar title", "Daftar Komik" in body, body[:300])
-    check("daftar alphabet index", "INDEKS" in body, body[:600])
-    check("daftar status filter", "Ongoing" in body and "Tamat" in body)
-    check("daftar pagination", "Halaman" in body, body[-500:])
+    body = wait_for_text(page, r"Showing")
+    check("daftar title", "Comic Catalogue" in body, body[:300])
+    check("daftar alphabet index", "INDEX" in body, body[:600])
+    check("daftar status filter", "Ongoing" in body and "Completed" in body)
+    check("daftar pagination", "Page" in body, body[-500:])
     check(
         "daftar shows catalogue total",
         bool(re.search(r"[1-9][\d.]{2,}", body)),
@@ -479,18 +479,18 @@ def test_daftar(page: Page) -> None:
     tiles.first.click()
     page.wait_for_timeout(4000)
     body = page.locator("body").inner_text()
-    check("daftar letter filter applied", "Menampilkan" in body, body[:600])
+    check("daftar letter filter applied", "Showing" in body, body[:600])
 
 
 def test_genre(page: Page) -> None:
     goto(page, "Genre")
     wait_for_selector(page, "main select")
     body = wait_for_text(page, r"Chapter \d")
-    check("genre title", "Daftar Genre" in body, body[:300])
-    check("genre combine bar", "Gabungkan" in body, body[:600])
-    check("genre sort row", "URUTKAN" in body)
-    check("genre popular rail", "Genre populer" in body)
-    check("genre quick collection", "Koleksi cepat" in body)
+    check("genre title", "Genre Catalogue" in body, body[:300])
+    check("genre combine bar", "Combine" in body, body[:600])
+    check("genre sort row", "SORT" in body)
+    check("genre popular rail", "Popular genres" in body)
+    check("genre quick collection", "Quick collections" in body)
     check(
         "genre listing rows",
         bool(re.search(r"Chapter \d", body)),

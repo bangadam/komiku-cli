@@ -70,7 +70,7 @@ export interface GenreSeriesReport {
   series: DiscoverySeries[] | null
 }
 
-export type RankingPeriod = "harian" | "mingguan" | "bulanan" | "total"
+export type RankingPeriod = "daily" | "weekly" | "monthly" | "all"
 export type TrendingPeriod = "daily" | "weekly" | "monthly" | "active"
 export type FeedOrder = "update" | "new" | "random"
 export type DiscoveryType = "" | "manga" | "manhwa" | "manhua"
@@ -127,7 +127,7 @@ export async function getFeed(options: {
 export async function getCatalog(options: {
   letter?: string
   type?: DiscoveryType
-  status?: "" | "ongoing" | "tamat"
+  status?: "" | "ongoing" | "completed"
   page?: number
 }): Promise<CatalogReport> {
   const args = ["catalog", "--json"]
@@ -186,17 +186,35 @@ export function seriesTitleFromSlug(slug: string): string {
     .join(" ")
 }
 
-/** Group a feed into relative time buckets for the Terbaru screen. */
+/** Group a feed into relative time buckets for the Latest screen. */
 export function relativeBucket(updated?: string): string {
-  if (!updated) return "HARI INI"
+  if (!updated) return "TODAY"
   const value = updated.toLowerCase()
   const minutes = /(\d+)\s*menit/.exec(value)
-  if (minutes) return "KURANG DARI 3 JAM"
+  if (minutes) return "LESS THAN 3 HOURS"
   const hours = /(\d+)\s*jam/.exec(value)
-  if (hours) return Number(hours[1]) < 3 ? "KURANG DARI 3 JAM" : "HARI INI"
+  if (hours) return Number(hours[1]) < 3 ? "LESS THAN 3 HOURS" : "TODAY"
   const days = /(\d+)\s*hari/.exec(value)
-  if (days) return "MINGGU INI"
-  return "HARI INI"
+  if (days) return "THIS WEEK"
+  return "TODAY"
+}
+
+const relativeUnits: Record<string, string> = {
+  menit: "min",
+  jam: "h",
+  hari: "d",
+}
+
+/**
+ * The feed reports its update age in the site's language ("5 menit lalu").
+ * Render it with English units; anything unrecognised passes through.
+ */
+export function formatUpdated(value?: string): string | undefined {
+  if (!value) return undefined
+  const match = /^(\d+)\s*(menit|jam|hari)(?:\s*lalu)?$/i.exec(value.trim())
+  if (!match) return value
+  const unit = relativeUnits[match[2].toLowerCase()]
+  return `${match[1]} ${unit} ago`
 }
 
 export function isFresh(updated?: string): boolean {

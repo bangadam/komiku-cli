@@ -26,16 +26,16 @@ import { useAsync } from "@/lib/use-async"
 import { cn } from "@/lib/utils"
 
 const periodOptions: { id: RankingPeriod; label: string }[] = [
-  { id: "harian", label: "Harian" },
-  { id: "mingguan", label: "Mingguan" },
-  { id: "bulanan", label: "Bulanan" },
-  { id: "total", label: "Total" },
+  { id: "daily", label: "Daily" },
+  { id: "weekly", label: "Weekly" },
+  { id: "monthly", label: "Monthly" },
+  { id: "all", label: "All time" },
 ]
 
 type TypeFilter = "" | "manga" | "manhwa" | "manhua"
 
 const typeOptions: { id: TypeFilter; label: string }[] = [
-  { id: "", label: "Semua" },
+  { id: "", label: "All" },
   { id: "manga", label: "Manga" },
   { id: "manhwa", label: "Manhwa" },
   { id: "manhua", label: "Manhua" },
@@ -45,7 +45,7 @@ type SortKey = "views" | "title"
 
 const sortOptions: { id: SortKey; label: string }[] = [
   { id: "views", label: "Views" },
-  { id: "title", label: "Judul A–Z" },
+  { id: "title", label: "Title A–Z" },
 ]
 
 export function RankingScreen({
@@ -53,7 +53,7 @@ export function RankingScreen({
 }: {
   onOpenSeries: (slug: string, url?: string) => void
 }) {
-  const [period, setPeriod] = useState<RankingPeriod>("harian")
+  const [period, setPeriod] = useState<RankingPeriod>("daily")
   const [type, setType] = useState<TypeFilter>("")
   const [sort, setSort] = useState<SortKey>("views")
 
@@ -61,7 +61,7 @@ export function RankingScreen({
   // The previous window is only used to show how a title moved between
   // boards; both numbers come straight from the site.
   const comparison = useAsync(
-    () => getRanking(period === "harian" ? "mingguan" : "harian"),
+    () => getRanking(period === "daily" ? "weekly" : "daily"),
     [period]
   )
 
@@ -135,12 +135,14 @@ export function RankingScreen({
   }, [rows])
 
   const periodLabel =
-    periodOptions.find((option) => option.id === period)?.label ?? "Harian"
-  const otherPeriodLabel = period === "harian" ? "mingguan" : "harian"
+    periodOptions.find((option) => option.id === period)?.label ?? "Daily"
+  const otherPeriod: RankingPeriod = period === "daily" ? "weekly" : "daily"
+  const otherPeriodLabel =
+    periodOptions.find((option) => option.id === otherPeriod)?.label ?? "Weekly"
 
   return (
     <div className="flex h-full flex-col overflow-hidden">
-      <DiscoveryBar icon={Trophy} label="Peringkat">
+      <DiscoveryBar icon={Trophy} label="Rankings">
         <BarMeta icon={Trophy}>komiku.org/p/ranking</BarMeta>
         <span className="mx-1 h-4 w-px bg-border" />
         <RefreshButton busy={ranking.loading} onClick={ranking.reload} />
@@ -150,10 +152,10 @@ export function RankingScreen({
         <div className="flex items-start gap-4">
           <div className="flex min-w-0 flex-col gap-1.5">
             <h1 className="text-[30px] font-semibold leading-[1.1] tracking-[-0.02em]">
-              Peringkat Komiku
+              Komiku Rankings
             </h1>
             <p className="text-[13px] text-muted-foreground">
-              {periodLabel} · {formatCount(rows.length)} judul di halaman ini
+              {periodLabel} · {formatCount(rows.length)} titles on this page
             </p>
           </div>
           <div className="flex-1" />
@@ -174,7 +176,7 @@ export function RankingScreen({
             />
           ))}
           <div className="flex-1" />
-          <span className="text-[11px] text-dim">Urutkan</span>
+          <span className="text-[11px] text-dim">Sort</span>
           <SegmentedControl
             options={sortOptions}
             value={sort}
@@ -187,20 +189,20 @@ export function RankingScreen({
             <div className="flex items-center gap-3 border-b border-border-subtle bg-card px-4 py-2.5 text-[10px] font-semibold uppercase tracking-[0.06em] text-dim">
               <span className="w-6 shrink-0">#</span>
               <span className="w-[34px] shrink-0" />
-              <span className="flex-1">Judul</span>
+              <span className="flex-1">Title</span>
               <span className="w-[90px] shrink-0">Genre</span>
               <span className="w-[80px] shrink-0 text-right">Views</span>
-              <span className="w-[86px] shrink-0 text-right">Terbaru</span>
+              <span className="w-[86px] shrink-0 text-right">Latest</span>
             </div>
 
             {ranking.loading && !ranking.data ? (
-              <LoadingState label="Membaca peringkat…" />
+              <LoadingState label="Reading the rankings…" />
             ) : ranking.error ? (
               <ErrorState message={ranking.error} onRetry={ranking.reload} />
             ) : rows.length === 0 ? (
               <EmptyState
-                title="Tidak ada judul"
-                hint="Coba filter tipe lain."
+                title="No titles"
+                hint="Try another type filter."
                 icon={Trophy}
               />
             ) : (
@@ -248,17 +250,17 @@ export function RankingScreen({
           <aside className="flex w-[330px] shrink-0 flex-col gap-3.5 overflow-y-auto">
             <div className="flex flex-col gap-3 rounded-[8px] border border-border-subtle bg-surface p-4">
               <div className="flex items-center gap-2">
-                <span className="text-[12px] font-semibold">Pergerakan</span>
+                <span className="text-[12px] font-semibold">Movement</span>
                 <div className="flex-1" />
                 <span className="font-mono text-[10px] text-dim">
                   vs {otherPeriodLabel}
                 </span>
               </div>
               {comparison.loading && !comparison.data ? (
-                <span className="text-[11px] text-dim">Menghitung…</span>
+                <span className="text-[11px] text-dim">Calculating…</span>
               ) : movers.length === 0 ? (
                 <span className="text-[11px] leading-relaxed text-dim">
-                  Tidak ada perbedaan posisi antara dua periode ini.
+                  No rank changes between these two periods.
                 </span>
               ) : (
                 <div className="flex flex-col gap-2">
@@ -287,14 +289,14 @@ export function RankingScreen({
                 </div>
               )}
               <span className="text-[10px] leading-relaxed text-dim">
-                Posisi di peringkat {periodLabel.toLowerCase()} dibandingkan
-                peringkat {otherPeriodLabel}.
+                Position in the {periodLabel.toLowerCase()} ranking compared
+                with the {otherPeriodLabel.toLowerCase()} ranking.
               </span>
             </div>
 
             <div className="flex flex-col gap-3 rounded-[8px] border border-border-subtle bg-surface p-4">
               <div className="flex items-center gap-2">
-                <span className="text-[12px] font-semibold">Sebaran tipe</span>
+                <span className="text-[12px] font-semibold">Type mix</span>
                 <div className="flex-1" />
                 <span className="font-mono text-[10px] text-dim">
                   {typedCount}/{rows.length}
@@ -319,13 +321,13 @@ export function RankingScreen({
               ))}
               <span className="text-[10px] leading-relaxed text-dim">
                 {typedCount === rows.length
-                  ? "Semua judul punya tipe yang diketahui."
-                  : `${typedCount} dari ${rows.length} judul punya tipe yang diketahui.`}
+                  ? "Every title has a known type."
+                  : `${typedCount} of ${rows.length} titles have a known type.`}
               </span>
             </div>
 
             <div className="flex flex-col gap-2.5 rounded-[8px] border border-border-subtle bg-surface p-4">
-              <span className="text-[12px] font-semibold">Genre teratas</span>
+              <span className="text-[12px] font-semibold">Top genres</span>
               {topGenres.length === 0 ? (
                 <span className="text-[11px] text-dim">—</span>
               ) : (
@@ -347,8 +349,8 @@ export function RankingScreen({
 
             <div className="rounded-[7px] bg-muted p-2.5">
               <p className="text-[10px] leading-relaxed text-dim">
-                Peringkat diambil langsung dari komiku.org dan tidak disimpan di
-                library. Klik judul untuk membuka detail series.
+                Rankings come straight from komiku.org and are not saved to
+                your library. Click a title to open the series.
               </p>
             </div>
           </aside>

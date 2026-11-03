@@ -107,8 +107,8 @@ export async function loadReaderChapter(
   try {
     const result = await handle.done
     options.signal?.throwIfAborted()
-    if (!result.ok) throw new Error(firstErrorLine(result.stderr) || "Chapter gagal dimuat.")
-    if (!report) throw new Error("komiku-cli read tidak mengembalikan daftar halaman.")
+    if (!result.ok) throw new Error(firstErrorLine(result.stderr) || "Chapter failed to load.")
+    if (!report) throw new Error("komiku-cli read returned no page list.")
     return report
   } finally {
     options.signal?.removeEventListener("abort", cancel)
@@ -137,11 +137,11 @@ export async function acquirePageSource(path: string): Promise<{ source: string;
       request = (async () => {
         if (import.meta.env.DEV && !isTauri) {
           const response = await fetch(`/__page?path=${encodeURIComponent(path)}`)
-          if (!response.ok) throw new Error("File halaman tidak bisa dibuka.")
+          if (!response.ok) throw new Error("The page file could not be opened.")
           return URL.createObjectURL(await response.blob())
         }
         const source = await invoke<string | null>("read_page", { path })
-        if (!source) throw new Error("File halaman tidak bisa dibuka.")
+        if (!source) throw new Error("The page file could not be opened.")
         return source
       })()
       pending.set(path, request)

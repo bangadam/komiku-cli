@@ -32,19 +32,19 @@ import { cn } from "@/lib/utils"
 type TypeFilter = "" | "manga" | "manhwa" | "manhua"
 
 const typeOptions: { id: TypeFilter; label: string }[] = [
-  { id: "", label: "Semua" },
+  { id: "", label: "All" },
   { id: "manga", label: "Manga" },
   { id: "manhwa", label: "Manhwa" },
   { id: "manhua", label: "Manhua" },
 ]
 
 const tabOptions: { id: FeedOrder; label: string; icon: typeof Rss }[] = [
-  { id: "update", label: "Chapter terbaru", icon: Rss },
-  { id: "new", label: "Komik terbaru", icon: Clock },
-  { id: "random", label: "Acak", icon: Shuffle },
+  { id: "update", label: "Latest chapters", icon: Rss },
+  { id: "new", label: "Latest comics", icon: Clock },
+  { id: "random", label: "Random", icon: Shuffle },
 ]
 
-const bucketOrder = ["KURANG DARI 3 JAM", "HARI INI", "MINGGU INI", "LAINNYA"]
+const bucketOrder = ["LESS THAN 3 HOURS", "TODAY", "THIS WEEK", "OTHER"]
 
 export function LatestScreen({
   onOpenSeries,
@@ -88,11 +88,11 @@ export function LatestScreen({
   // loaded page, so it never claims more precision than the feed provides.
   const rhythm = useMemo(() => {
     const buckets = [
-      { label: "<3 jam", count: 0 },
-      { label: "3–6 jam", count: 0 },
-      { label: "6–12 jam", count: 0 },
-      { label: "12–24 jam", count: 0 },
-      { label: ">24 jam", count: 0 },
+      { label: "<3 h", count: 0 },
+      { label: "3–6 h", count: 0 },
+      { label: "6–12 h", count: 0 },
+      { label: "12–24 h", count: 0 },
+      { label: ">24 h", count: 0 },
     ]
     for (const entry of rows) {
       const value = (entry.updated ?? "").toLowerCase()
@@ -113,7 +113,7 @@ export function LatestScreen({
 
   return (
     <div className="flex h-full flex-col overflow-hidden">
-      <DiscoveryBar icon={Clock} label="Terbaru">
+      <DiscoveryBar icon={Clock} label="Latest">
         <button
           type="button"
           onClick={() => setAutoRefresh((value) => !value)}
@@ -142,10 +142,10 @@ export function LatestScreen({
         <div className="flex items-start gap-4">
           <div className="flex min-w-0 flex-col gap-1.5">
             <h1 className="text-[30px] font-semibold leading-[1.1] tracking-[-0.02em]">
-              Update Terbaru
+              Latest Updates
             </h1>
             <p className="text-[13px] text-muted-foreground">
-              {formatCount(rows.length)} judul di halaman ini · sumber komiku.org
+              {formatCount(rows.length)} titles on this page · source komiku.org
             </p>
           </div>
         </div>
@@ -186,13 +186,13 @@ export function LatestScreen({
         <div className="mt-4 flex min-h-0 gap-5">
           <div className="flex min-w-0 flex-1 flex-col gap-4">
             {feed.loading && !feed.data ? (
-              <LoadingState label="Membaca update terbaru…" />
+              <LoadingState label="Reading the latest updates…" />
             ) : feed.error ? (
               <ErrorState message={feed.error} onRetry={feed.reload} />
             ) : rows.length === 0 ? (
               <EmptyState
-                title="Tidak ada update"
-                hint="Coba tab atau filter lain."
+                title="No updates"
+                hint="Try another tab or filter."
                 icon={Clock}
               />
             ) : (
@@ -236,7 +236,7 @@ export function LatestScreen({
                             </span>
                             {entry.color && (
                               <span className="shrink-0 text-[9px] text-info">
-                                Berwarna
+                                Color
                               </span>
                             )}
                           </span>
@@ -263,10 +263,10 @@ export function LatestScreen({
             <div className="flex flex-col gap-3 rounded-[8px] border border-border-subtle bg-surface p-4">
               <div className="flex items-center gap-2">
                 <Timer className="size-3.5 text-dim" strokeWidth={1.8} />
-                <span className="text-[12px] font-semibold">Ritme update</span>
+                <span className="text-[12px] font-semibold">Update rhythm</span>
                 <div className="flex-1" />
                 <span className="font-mono text-[10px] text-dim">
-                  {rows.length} judul
+                  {rows.length} titles
                 </span>
               </div>
               <div className="flex h-16 items-end gap-1.5">
@@ -292,14 +292,14 @@ export function LatestScreen({
                 ))}
               </div>
               <span className="text-[10px] leading-relaxed text-dim">
-                Dihitung dari waktu update pada halaman yang sedang tampil.
+                Counted from the update times on this page.
               </span>
             </div>
 
             <div className="rounded-[7px] bg-muted p-2.5">
               <p className="text-[10px] leading-relaxed text-dim">
-                Auto-refresh hanya memperbarui daftar. Unduhan tetap berjalan
-                lewat layar Downloads.
+                Auto-refresh only reloads the list. Downloads keep running on
+                the Downloads screen.
               </p>
             </div>
           </aside>

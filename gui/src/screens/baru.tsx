@@ -23,7 +23,7 @@ import { cn } from "@/lib/utils"
 type TypeFilter = "" | "manga" | "manhwa" | "manhua"
 
 const typeOptions: { id: TypeFilter; label: string }[] = [
-  { id: "", label: "Semua" },
+  { id: "", label: "All" },
   { id: "manga", label: "Manga" },
   { id: "manhwa", label: "Manhwa" },
   { id: "manhua", label: "Manhua" },
@@ -58,7 +58,7 @@ export function NewScreen({
 
   return (
     <div className="flex h-full flex-col overflow-hidden">
-      <DiscoveryBar icon={Sparkles} label="Baru">
+      <DiscoveryBar icon={Sparkles} label="New">
         <BarMeta icon={Sparkles}>komiku.org/pustaka?orderby=date</BarMeta>
         <span className="mx-1 h-4 w-px bg-border" />
         <RefreshButton busy={feed.loading} onClick={feed.reload} />
@@ -68,11 +68,11 @@ export function NewScreen({
         <div className="flex items-start gap-4">
           <div className="flex min-w-0 flex-col gap-1.5">
             <h1 className="text-[30px] font-semibold leading-[1.1] tracking-[-0.02em]">
-              Baru Ditambahkan
+              Recently Added
             </h1>
             <p className="text-[13px] text-muted-foreground">
-              {formatCount(totals.data?.all)} judul di katalog ·{" "}
-              {freshCount} update baru di halaman ini
+              {formatCount(totals.data?.all)} titles in the catalogue ·{" "}
+              {freshCount} new updates on this page
             </p>
           </div>
         </div>
@@ -102,17 +102,17 @@ export function NewScreen({
             )
           })}
           <div className="flex-1" />
-          <span className="font-mono text-[10px] text-dim">Minggu ini</span>
+          <span className="font-mono text-[10px] text-dim">This week</span>
         </div>
 
         {feed.loading && !feed.data ? (
-          <LoadingState label="Membaca judul baru…" />
+          <LoadingState label="Reading new titles…" />
         ) : feed.error ? (
           <ErrorState message={feed.error} onRetry={feed.reload} />
         ) : rows.length === 0 ? (
           <EmptyState
-            title="Tidak ada judul baru"
-            hint="Coba filter tipe lain."
+            title="No new titles"
+            hint="Try another type filter."
             icon={Sparkles}
           />
         ) : (

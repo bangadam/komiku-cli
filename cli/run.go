@@ -52,6 +52,10 @@ type Dependencies struct {
 	Now        func() time.Time
 	ConfigPath string
 	BaseURL    string
+	// SolverPath is the Cloudflare challenge solver executable. Empty disables
+	// solving. SessionPath is where the solved browser session is cached.
+	SolverPath  string
+	SessionPath string
 }
 
 func Main(ctx context.Context, args []string, stdout, stderr io.Writer, dependencies Dependencies) int {
@@ -643,6 +647,7 @@ func NewConfigCommand(dependencies Dependencies) *cobra.Command {
 	cmd.Flags().String("out", "", "persistent output directory")
 	cmd.Flags().String("delay", "", "persistent image request delay")
 	cmd.Flags().String("preset", "", "persistent CBZ preset")
+	cmd.Flags().String("solver", "", "persistent Cloudflare challenge solver executable")
 	cmd.Flags().Bool("json", false, "print the effective config as JSON")
 	return cmd
 }
@@ -674,6 +679,10 @@ func runConfig(flags *pflag.FlagSet, stdout io.Writer, dependencies Dependencies
 		fileConfig.Preset, _ = flags.GetString("preset")
 		changed = true
 	}
+	if flags.Changed("solver") {
+		fileConfig.Solver, _ = flags.GetString("solver")
+		changed = true
+	}
 	if changed {
 		if err := SaveFileConfig(configPath, fileConfig); err != nil {
 			return fmt.Errorf("save config: %w", err)
@@ -689,10 +698,15 @@ func runConfig(flags *pflag.FlagSet, stdout io.Writer, dependencies Dependencies
 			"output_root": config.OutputRoot,
 			"image_delay": config.ImageDelay.String(),
 			"preset":      config.Preset,
+			"solver":      config.Solver,
 			"config_path": configPath,
 		})
 	}
-	fmt.Fprintf(stdout, "output root: %s\nconfig: %s\n", config.OutputRoot, configPath)
+	solver := config.Solver
+	if solver == "" {
+		solver = "(not configured)"
+	}
+	fmt.Fprintf(stdout, "output root: %s\nsolver: %s\nconfig: %s\n", config.OutputRoot, solver, configPath)
 	return nil
 }
 

@@ -2,6 +2,7 @@ package komiku
 
 import (
 	"bufio"
+	"bytes"
 	"context"
 	"errors"
 	"fmt"
@@ -20,6 +21,15 @@ import (
 const DefaultUserAgent = "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0 Safari/537.36"
 
 var legacyHostPattern = regexp.MustCompile(`^image[0-9]+\.komiku\.to$`)
+
+// cloudflareChallengeMarkers identify the interstitial Cloudflare serves when
+// it refuses a non-browser client. The Cf-Mitigated header is authoritative;
+// these markers cover responses where the header is stripped.
+var cloudflareChallengeMarkers = [][]byte{
+	[]byte("Just a moment"),
+	[]byte("Tunggu sebentar"),
+	[]byte("challenges.cloudflare.com"),
+}
 
 type SleepFunc func(context.Context, time.Duration) error
 
@@ -125,12 +135,27 @@ func sleepContext(ctx context.Context, delay time.Duration) error {
 	}
 }
 
+// SolvedSession is a browser session a challenge solver obtained for a host.
+// Cookie is a ready-to-send Cookie header value; UserAgent is the browser
+// identity Cloudflare bound that cookie to, so both must travel together.
+type SolvedSession struct {
+	UserAgent string `json:"ua,omitempty"`
+	Cookie    string `json:"cookies,omitempty"`
+	Host      string `json:"host,omitempty"`
+}
+
 type Client struct {
 	HTTP      *http.Client
 	UserAgent string
 	BaseURL   string
 	Limiter   *Limiter
 	Sleep     SleepFunc
+	// Solver resolves a Cloudflare challenge for a URL. Nil disables solving,
+	// which leaves challenged pages as plain 403 responses.
+	Solver  func(context.Context, string) (SolvedSession, error)
+	Session *SolvedSession
+
+	sessionMu sync.RWMutex
 }
 
 func NewClient(httpClient *http.Client, imageDelay time.Duration) *Client {
@@ -182,28 +207,80 @@ func (c *Client) fetchHTML(ctx context.Context, target string) ([]byte, error) {
 }
 
 // fetchPage performs a GET and returns the body with the HTTP status, so
-// callers can distinguish missing pages (404) from other failures.
+// callers can distinguish missing pages (404) from other failures. A
+// Cloudflare challenge is solved once and retried with the resulting session.
 func (c *Client) fetchPage(ctx context.Context, target string) ([]byte, int, string, error) {
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, target, nil)
+	data, status, statusText, headers, err := c.doPage(ctx, target)
 	if err != nil {
 		return nil, 0, "", err
 	}
-	req.Header.Set("User-Agent", c.userAgent())
-	resp, err := c.httpClient().Do(req)
+	if status != http.StatusForbidden || c.Solver == nil || !isCloudflareChallenge(headers, data) {
+		return data, status, statusText, nil
+	}
+	session, err := c.Solver(ctx, target)
+	if err != nil {
+		return nil, 0, "", fmt.Errorf("GET %s: cloudflare challenge not solved: %w", target, err)
+	}
+	if session.Host == "" {
+		if parsed, parseErr := url.Parse(target); parseErr == nil {
+			session.Host = parsed.Hostname()
+		}
+	}
+	c.storeSession(session)
+	data, status, statusText, _, err = c.doPage(ctx, target)
 	if err != nil {
 		return nil, 0, "", err
+	}
+	return data, status, statusText, nil
+}
+
+func (c *Client) doPage(ctx context.Context, target string) ([]byte, int, string, http.Header, error) {
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, target, nil)
+	if err != nil {
+		return nil, 0, "", nil, err
+	}
+	req.Header.Set("User-Agent", c.userAgent())
+	if session := c.session(); session != nil && session.Cookie != "" && sessionMatchesHost(session.Host, target) {
+		req.Header.Set("Cookie", session.Cookie)
+	}
+	resp, err := c.httpClient().Do(req)
+	if err != nil {
+		return nil, 0, "", nil, err
 	}
 	defer resp.Body.Close()
 	statusText := resp.Status
 	const maxHTML = 16 << 20
 	data, err := io.ReadAll(io.LimitReader(resp.Body, maxHTML+1))
 	if err != nil {
-		return nil, resp.StatusCode, statusText, err
+		return nil, resp.StatusCode, statusText, resp.Header, err
 	}
 	if len(data) > maxHTML {
-		return nil, resp.StatusCode, statusText, fmt.Errorf("GET %s: HTML exceeds %d bytes", target, maxHTML)
+		return nil, resp.StatusCode, statusText, resp.Header, fmt.Errorf("GET %s: HTML exceeds %d bytes", target, maxHTML)
 	}
-	return data, resp.StatusCode, statusText, nil
+	return data, resp.StatusCode, statusText, resp.Header, nil
+}
+
+func isCloudflareChallenge(headers http.Header, body []byte) bool {
+	if strings.EqualFold(strings.TrimSpace(headers.Get("Cf-Mitigated")), "challenge") {
+		return true
+	}
+	for _, marker := range cloudflareChallengeMarkers {
+		if bytes.Contains(body, marker) {
+			return true
+		}
+	}
+	return false
+}
+
+func sessionMatchesHost(host, target string) bool {
+	if host == "" {
+		return false
+	}
+	parsed, err := url.Parse(target)
+	if err != nil {
+		return false
+	}
+	return strings.EqualFold(parsed.Hostname(), host)
 }
 
 func (c *Client) ChapterImages(ctx context.Context, chapterURL string) ([]string, error) {
@@ -324,6 +401,9 @@ func (c *Client) fetchImage(ctx context.Context, target, referer string, save Sa
 	}
 	req.Header.Set("User-Agent", c.userAgent())
 	req.Header.Set("Referer", referer)
+	if session := c.session(); session != nil && session.Cookie != "" && sessionMatchesHost(session.Host, target) {
+		req.Header.Set("Cookie", session.Cookie)
+	}
 	resp, err := c.httpClient().Do(req)
 	if err != nil {
 		return err
@@ -354,10 +434,31 @@ func (c *Client) httpClient() *http.Client {
 }
 
 func (c *Client) userAgent() string {
+	// A solved session's User-Agent is part of the cf_clearance identity, so it
+	// outranks the configured default for every request the session covers.
+	if session := c.session(); session != nil && session.UserAgent != "" {
+		return session.UserAgent
+	}
 	if c.UserAgent != "" {
 		return c.UserAgent
 	}
 	return DefaultUserAgent
+}
+
+func (c *Client) session() *SolvedSession {
+	c.sessionMu.RLock()
+	defer c.sessionMu.RUnlock()
+	if c.Session == nil {
+		return nil
+	}
+	snapshot := *c.Session
+	return &snapshot
+}
+
+func (c *Client) storeSession(session SolvedSession) {
+	c.sessionMu.Lock()
+	defer c.sessionMu.Unlock()
+	c.Session = &session
 }
 
 func (c *Client) sleep() SleepFunc {

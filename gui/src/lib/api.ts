@@ -105,6 +105,7 @@ export interface ConfigReport {
   output_root: string
   image_delay: string
   preset: string
+  solver: string
   config_path: string
 }
 
@@ -164,11 +165,13 @@ export async function saveConfig(values: {
   out?: string
   delay?: string
   preset?: string
+  solver?: string
 }): Promise<ConfigReport> {
   const args = ["config", "--json"]
   if (values.out !== undefined) args.push("--out", values.out)
   if (values.delay !== undefined) args.push("--delay", values.delay)
   if (values.preset !== undefined) args.push("--preset", values.preset)
+  if (values.solver !== undefined) args.push("--solver", values.solver)
   return runCliJson<ConfigReport>(args)
 }
 

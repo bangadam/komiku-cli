@@ -59,10 +59,13 @@ func Run(ctx context.Context, input io.Reader, output, stderr io.Writer, depende
 		fmt.Fprintln(stderr, "error:", err)
 		return 1
 	}
-	client := komiku.NewClient(dependencies.HTTP, config.ImageDelay)
-	if dependencies.BaseURL != "" {
-		client.BaseURL = dependencies.BaseURL
-	}
+	client := cli.Dependencies{
+		HTTP:        dependencies.HTTP,
+		BaseURL:     dependencies.BaseURL,
+		ConfigPath:  configPath,
+		SolverPath:  cli.ResolveSolverPath(fileConfig.Solver),
+		SessionPath: cli.SessionCachePath(configPath),
+	}.NewKomikuClient(config.ImageDelay)
 	workers := dependencies.Workers
 	if workers == 0 {
 		workers = 3

@@ -39,7 +39,7 @@ func main() {
 }
 
 func newRootCommand(input io.Reader, stdout, stderr io.Writer) *cobra.Command {
-	root := cli.NewRootCommand(stdout, stderr, cli.Dependencies{})
+	root := cli.NewRootCommand(stdout, stderr, newDependencies())
 	root.SetIn(input)
 	root.Long = "komiku-cli downloads Komiku manga chapters and packs them into offline CBZ archives. Run without arguments for the interactive TUI."
 	var output string
@@ -59,6 +59,26 @@ func newRootCommand(input io.Reader, stdout, stderr io.Writer) *cobra.Command {
 	root.Flags().StringVar(&output, "out", "", "output directory for this run")
 	root.AddCommand(newTUICommand())
 	return root
+}
+
+// newDependencies wires the persistent config into the command tree. The
+// challenge solver is resolved once here so every command sees the same
+// setting. A broken config is reported by the commands that need it, not
+// guessed at startup.
+func newDependencies() cli.Dependencies {
+	dependencies := cli.Dependencies{}
+	configPath, err := cli.ConfigPath()
+	if err != nil {
+		return dependencies
+	}
+	dependencies.ConfigPath = configPath
+	dependencies.SessionPath = cli.SessionCachePath(configPath)
+	fileConfig, err := cli.LoadFileConfig(configPath)
+	if err != nil {
+		return dependencies
+	}
+	dependencies.SolverPath = cli.ResolveSolverPath(fileConfig.Solver)
+	return dependencies
 }
 
 // commandNames lists the root command's subcommands, excluding Cobra's

@@ -40,7 +40,21 @@ func (d Dependencies) newKomikuClient(imageDelay time.Duration) *komiku.Client {
 	if d.BaseURL != "" {
 		client.BaseURL = d.BaseURL
 	}
+	if d.SolverPath != "" {
+		client.Solver = NewChallengeSolver(d.SolverPath, d.SessionPath)
+		// A corrupt cache must not block startup: the next challenge simply
+		// overwrites it with a fresh session.
+		if session, err := LoadSession(d.SessionPath); err == nil {
+			client.Session = session
+		}
+	}
 	return client
+}
+
+// NewKomikuClient exposes the solver-wired client to other frontends such as
+// the interactive TUI.
+func (d Dependencies) NewKomikuClient(imageDelay time.Duration) *komiku.Client {
+	return d.newKomikuClient(imageDelay)
 }
 
 func NewSearchCommand(dependencies Dependencies) *cobra.Command {

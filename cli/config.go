@@ -23,6 +23,7 @@ type FileConfig struct {
 	OutputRoot string `json:"output_root,omitempty"`
 	ImageDelay string `json:"image_delay,omitempty"`
 	Preset     string `json:"preset,omitempty"`
+	Solver     string `json:"solver,omitempty"`
 }
 
 type Overrides struct {
@@ -35,6 +36,7 @@ type Config struct {
 	OutputRoot string
 	ImageDelay time.Duration
 	Preset     string
+	Solver     string
 }
 
 func ConfigPath() (string, error) {
@@ -121,6 +123,7 @@ func ResolveConfig(file FileConfig, flags Overrides) (Config, error) {
 	if file.Preset != "" {
 		config.Preset = file.Preset
 	}
+	config.Solver = strings.TrimSpace(file.Solver)
 	if flags.OutputRoot != nil {
 		config.OutputRoot = *flags.OutputRoot
 	}
@@ -135,6 +138,9 @@ func ResolveConfig(file FileConfig, flags Overrides) (Config, error) {
 	}
 	if config.ImageDelay < 0 {
 		return Config{}, errors.New("image delay must not be negative")
+	}
+	if strings.IndexByte(config.Solver, 0) >= 0 || len(config.Solver) > 4096 {
+		return Config{}, errors.New("solver path is invalid")
 	}
 	switch config.Preset {
 	case "medium", "small", "tiny", "raw":

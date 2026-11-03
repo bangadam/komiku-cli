@@ -24,6 +24,7 @@ const backgrounds: { id: ReaderBackground; label: string }[] = [
   { id: "dark", label: "Dark" }, { id: "dim", label: "Dim" }, { id: "paper", label: "Paper" },
 ]
 const backgroundClass = { dark: "bg-[#09090b]", dim: "bg-background", paper: "bg-[#e8e2d7]" }
+const EMPTY_PAGES: ReadonlySet<number> = new Set()
 
 function Segments<T extends string>({ label, options, value, onChange }: {
   label: string; options: { id: T; label: string }[]; value: T; onChange: (value: T) => void
@@ -62,30 +63,33 @@ function ReaderSession({ slug, seriesURL, initialChapter, onBack, onOpenSeries }
   const [chapter, setChapter] = useState(initialChapter ?? "latest")
   const [attempt, setAttempt] = useState(0)
   const [offline, setOffline] = useState(false)
+  // One key per chapter request, so a stale report can never paint a newer one.
+  const requestKey = JSON.stringify([seriesURL, chapter, attempt, offline, slug])
   const [state, setState] = useState<{
-    chapter: string
+    key: string
     report: ReaderReport | null
     busy: boolean
     error: string | null
-  }>({ chapter, report: null, busy: true, error: null })
+  }>({ key: requestKey, report: null, busy: true, error: null })
   const [page, setPage] = useState(1)
   const [panel, setPanel] = useState<"chapters" | "settings" | null>(null)
   const [chapterQuery, setChapterQuery] = useState("")
   const [chapterFilter, setChapterFilter] = useState<"all" | "unread" | "disk">("all")
   const [fullscreen, setFullscreen] = useState(false)
-  const [hidden, setHidden] = useState(false)
+  const [hiddenState, setHidden] = useState(false)
   const [viewportHeight, setViewportHeight] = useState(700)
-  const [rendered, setRendered] = useState<Set<number>>(new Set())
-  const idle = useRef<ReturnType<typeof setTimeout> | null>(null)
+  const [renderedPages, setRenderedPages] = useState<{ key: string; pages: ReadonlySet<number> }>({ key: requestKey, pages: EMPTY_PAGES })
+  const idle = useRef<number | undefined>(undefined)
   const content = useRef<HTMLDivElement>(null)
   const strip = useRef<HTMLDivElement>(null)
   const pageRef = useRef(page)
   const prefetched = useRef(new Set<string>())
-  // A report for a previous chapter must never render under the new chapter.
-  const loaded = state.chapter === chapter ? state : null
+  // A report for a previous request must never render under the new chapter.
+  const loaded = state.key === requestKey ? state : null
   const report = loaded?.report ?? null
   const busy = loaded?.busy ?? true
   const failure = loaded?.error ?? null
+  const rendered = renderedPages.key === requestKey ? renderedPages.pages : EMPTY_PAGES
   const count = report?.page_count ?? 0
   // Progress is keyed by the stable series slug, never the URL (trailing
   // slashes and mirror hosts would otherwise split the same series in two).
@@ -98,8 +102,6 @@ function ReaderSession({ slug, seriesURL, initialChapter, onBack, onOpenSeries }
   useEffect(() => {
     const controller = new AbortController()
     let initialized = false
-    setState({ chapter, report: null, busy: true, error: null })
-    setRendered(new Set())
     const publish = (value: ReaderReport) => {
       if (controller.signal.aborted) return
       if (!initialized) {
@@ -107,12 +109,12 @@ function ReaderSession({ slug, seriesURL, initialChapter, onBack, onOpenSeries }
         const saved = getProgress(value.series || slug, value.chapter.display)
         setPage(clampPage(saved?.page ?? 1, value.page_count))
       }
-      setState((current) => ({ ...current, report: value }))
+      setState((current) => (current.key === requestKey ? { ...current, report: value } : current))
     }
     void loadReaderChapter(seriesURL, { chapter, offline, signal: controller.signal }, (event) => {
       if (controller.signal.aborted) return
       setState((current) => {
-        if (!current.report) return current
+        if (current.key !== requestKey || !current.report) return current
         const pages = current.report.pages.map((entry) => entry.index !== event.page ? entry : event.kind === "page_cached"
           ? { ...entry, local: event.local, cached: true, bytes: event.bytes, error: undefined }
           : { ...entry, error: event.message || "Gambar gagal diunduh." })
@@ -120,15 +122,15 @@ function ReaderSession({ slug, seriesURL, initialChapter, onBack, onOpenSeries }
       })
     }, publish).then((value) => {
       if (!controller.signal.aborted) {
-        setState({ chapter, report: value, busy: false, error: null })
+        setState({ key: requestKey, report: value, busy: false, error: null })
       }
     }).catch((error: unknown) => {
       if (!controller.signal.aborted) {
-        setState({ chapter, report: null, busy: false, error: error instanceof Error ? error.message : String(error) })
+        setState({ key: requestKey, report: null, busy: false, error: error instanceof Error ? error.message : String(error) })
       }
     })
     return () => { controller.abort(); clearPageCache() }
-  }, [seriesURL, chapter, attempt, offline])
+  }, [chapter, offline, requestKey, seriesURL, slug])
 
   const nextChapter = report?.next?.display
   useEffect(() => {
@@ -168,15 +170,21 @@ function ReaderSession({ slug, seriesURL, initialChapter, onBack, onOpenSeries }
 
   const hasReport = Boolean(report)
   const hasFailure = Boolean(failure)
-  const reveal = useCallback(() => {
-    if (idle.current) clearTimeout(idle.current)
-    setHidden(false)
-    if (prefs.autoHideChrome && !panel && hasReport && !hasFailure) {
-      idle.current = setTimeout(() => setHidden(true), 2500)
-    }
+  // Auto-hide never applies while a panel or an error needs the chrome.
+  const hidden = hiddenState && !panel && !hasFailure
+  // Arm (or clear) the chrome auto-hide timer for the current reader state.
+  const armIdle = useCallback(() => {
+    clearTimeout(idle.current)
+    idle.current = prefs.autoHideChrome && !panel && hasReport && !hasFailure
+      ? setTimeout(() => setHidden(true), 2500)
+      : undefined
   }, [prefs.autoHideChrome, panel, hasReport, hasFailure])
+  const reveal = useCallback(() => { setHidden(false); armIdle() }, [armIdle])
 
-  useEffect(() => { reveal(); return () => { if (idle.current) clearTimeout(idle.current) } }, [reveal])
+  useEffect(() => {
+    armIdle()
+    return () => clearTimeout(idle.current)
+  }, [armIdle])
 
   const retry = useCallback(() => {
     clearPageCache()
@@ -293,7 +301,11 @@ function ReaderSession({ slug, seriesURL, initialChapter, onBack, onOpenSeries }
         && (chapterFilter !== "unread" || !history[progressKey(seriesKey, row.display)]))
   }, [report, chapterQuery, chapterFilter, history, seriesKey])
 
-  const onPageLoaded = useCallback((index: number) => setRendered((current) => current.has(index) ? current : new Set([...current, index])), [])
+  const onPageLoaded = useCallback((index: number) => setRenderedPages((current) => {
+    if (current.key !== requestKey) return { key: requestKey, pages: new Set([index]) }
+    if (current.pages.has(index)) return current
+    return { key: requestKey, pages: new Set([...current.pages, index]) }
+  }), [requestKey])
   const modePages = prefs.mode === "strip" ? report?.pages ?? [] : (report?.pages ?? []).filter((entry) => visible.includes(entry.index))
   const leftDirection = prefs.rightToLeft ? 1 : -1
   const rightDirection = prefs.rightToLeft ? -1 : 1

@@ -114,6 +114,7 @@ export function SettingsScreen({
   const [root, setRoot] = useState("")
   const [delay, setDelay] = useState(DEFAULT_DELAY)
   const [preset, setPreset] = useState<Preset>("medium")
+  const [solver, setSolver] = useState("")
   const [baseline, setBaseline] = useState<ConfigReport | null>(null)
   const [saved, setSaved] = useState(false)
   const [busy, setBusy] = useState(false)
@@ -123,14 +124,17 @@ export function SettingsScreen({
   const config = configState.data
 
   // Seed the editable fields from the real config, and reseed whenever the CLI
-  // reports a new baseline (save, reset, reload).
-  useEffect(() => {
-    if (!config) return
+  // reports a new baseline (save, reset, reload). Seeding during render keeps
+  // the form from painting one frame with the previous values.
+  const [seeded, setSeeded] = useState<ConfigReport | null>(null)
+  if (config && config !== seeded) {
+    setSeeded(config)
     setBaseline(config)
     setRoot(config.output_root)
     setDelay(config.image_delay)
     setPreset(isPreset(config.preset) ? config.preset : "medium")
-  }, [config])
+    setSolver(config.solver ?? "")
+  }
 
   useEffect(() => {
     return () => {
@@ -203,11 +207,13 @@ export function SettingsScreen({
         out: root.trim() || ".",
         delay: trimmedDelay,
         preset,
+        solver: solver.trim(),
       })
       setBaseline(report)
       setRoot(report.output_root)
       setDelay(report.image_delay)
       setPreset(isPreset(report.preset) ? report.preset : "medium")
+      setSolver(report.solver ?? "")
       configState.setData(report)
       flashSaved()
       toast.success("Settings saved", { description: report.config_path })
@@ -229,11 +235,13 @@ export function SettingsScreen({
         out: ".",
         delay: DEFAULT_DELAY,
         preset: "medium",
+        solver: "",
       })
       setBaseline(report)
       setRoot(report.output_root)
       setDelay(report.image_delay)
       setPreset(isPreset(report.preset) ? report.preset : "medium")
+      setSolver(report.solver ?? "")
       configState.reload()
       library.reload()
       flashSaved()
@@ -337,7 +345,8 @@ export function SettingsScreen({
     baseline !== null &&
     (root !== baseline.output_root ||
       delay.trim() !== baseline.image_delay ||
-      preset !== baseline.preset)
+      preset !== baseline.preset ||
+      solver.trim() !== (baseline.solver ?? ""))
 
   const libraryFacts: { label: string; value: string }[] = [
     {
@@ -636,6 +645,31 @@ export function SettingsScreen({
                     </button>
                   ))}
                 </div>
+              </div>
+
+              <div className="flex flex-col gap-1">
+                <div className="flex items-center gap-2.5">
+                  <span className="font-mono text-[11px] text-foreground">
+                    solver
+                  </span>
+                  <div className="flex-1" />
+                  <span className="shrink-0 rounded-full bg-muted px-1.5 py-0.5 font-mono text-[10px] text-dim">
+                    string
+                  </span>
+                </div>
+                <input
+                  type="text"
+                  spellCheck={false}
+                  aria-label="solver"
+                  placeholder="tools/cf-solver/solve.py"
+                  value={solver}
+                  onChange={(event) => setSolver(event.target.value)}
+                  className="h-[30px] w-full rounded-[6px] border border-border bg-card px-2 font-mono text-[11px] text-foreground outline-none transition-colors focus-visible:border-primary"
+                />
+                <p className="text-[10px] leading-relaxed text-dim">
+                  Optional Camoufox script that solves Cloudflare challenges.
+                  Empty auto-detects tools/cf-solver/solve.py.
+                </p>
               </div>
             </div>
 

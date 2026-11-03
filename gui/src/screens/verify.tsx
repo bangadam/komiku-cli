@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from "react"
+import { useMemo, useState } from "react"
 import {
   ChevronDown,
   CircleAlert,
@@ -52,7 +52,7 @@ export function VerifyScreen({
 }: {
   library: AsyncState<LibraryReport | null>
 }) {
-  const [selectedDir, setSelectedDir] = useState<string | null>(null)
+  const [pickedDir, setPickedDir] = useState<string | null>(null)
   const [filter, setFilter] = useState<"problems" | "all">("problems")
   const [fixing, setFixing] = useState<string | null>(null)
 
@@ -61,14 +61,16 @@ export function VerifyScreen({
     [library.data]
   )
 
-  useEffect(() => {
-    if (!hasCliBridge || seriesList.length === 0) return
-    if (selectedDir && seriesList.some((item) => item.dir === selectedDir)) {
-      return
+  // Follow the picked series while it still exists, otherwise fall back to the
+  // first series that reported problems.
+  const selectedDir = useMemo(() => {
+    if (!hasCliBridge || seriesList.length === 0) return null
+    if (pickedDir && seriesList.some((item) => item.dir === pickedDir)) {
+      return pickedDir
     }
     const target = seriesList.find((item) => item.problems > 0) ?? seriesList[0]
-    setSelectedDir(target.dir)
-  }, [seriesList, selectedDir])
+    return target.dir
+  }, [pickedDir, seriesList])
 
   const verify = useAsync<VerifyReport | null>(
     () =>
@@ -123,7 +125,7 @@ export function VerifyScreen({
     : []
 
   function handleSeriesChange(dir: string) {
-    setSelectedDir(dir)
+    setPickedDir(dir)
     setFilter("problems")
   }
 

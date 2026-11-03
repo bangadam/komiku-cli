@@ -97,14 +97,15 @@ var (
 	feedLink       = regexp.MustCompile(`(?is)<a\b[^>]*href\s*=\s*["']([^"']*/manga/[^"']+)["']`)
 )
 
-// normalizeStatus folds the three spellings komiku.org uses for a finished
-// series into one label, so the UI can compare statuses reliably.
-func normalizeStatus(value string) string {
+// NormalizeStatus folds the spellings komiku.org uses for a series state
+// into one English label, so callers can compare and display statuses
+// reliably: "Completed", "Ongoing", or "Hiatus".
+func NormalizeStatus(value string) string {
 	switch strings.ToLower(strings.TrimSpace(value)) {
 	case "":
 		return ""
 	case "end", "ended", "complete", "completed", "tamat", "selesai":
-		return "Tamat"
+		return "Completed"
 	case "ongoing", "berjalan", "publishing":
 		return "Ongoing"
 	case "hiatus":
@@ -216,7 +217,7 @@ func ParseRankingPeriod(value string) (string, error) {
 	case "total", "all":
 		return "total", nil
 	}
-	return "", fmt.Errorf("invalid ranking period %q: use harian, mingguan, bulanan or total", value)
+	return "", fmt.Errorf("invalid ranking period %q: use daily, weekly, monthly, or all", value)
 }
 
 // ParseTrendingPeriod normalizes the trending window.
@@ -766,7 +767,7 @@ func ExtractCatalog(data []byte, baseURL string) (CatalogReport, error) {
 			}
 			if len(lines) > 1 {
 				status := extractText(lines[1])
-				entry.Status = normalizeStatus(strings.TrimPrefix(status, "Status:"))
+				entry.Status = NormalizeStatus(strings.TrimPrefix(status, "Status:"))
 			}
 		}
 		if entry.Type == "" {

@@ -356,14 +356,14 @@ func TestNormalizeStatusFoldsFinishedSpellings(t *testing.T) {
 		"":          "",
 		"Ongoing":   "Ongoing",
 		"ongoing":   "Ongoing",
-		"End":       "Tamat",
-		"Completed": "Tamat",
-		"tamat":     "Tamat",
+		"End":       "Completed",
+		"Completed": "Completed",
+		"tamat":     "Completed",
 		"Hiatus":    "Hiatus",
 	}
 	for input, want := range cases {
-		if got := normalizeStatus(input); got != want {
-			t.Fatalf("normalizeStatus(%q) = %q, want %q", input, got, want)
+		if got := NormalizeStatus(input); got != want {
+			t.Fatalf("NormalizeStatus(%q) = %q, want %q", input, got, want)
 		}
 	}
 }

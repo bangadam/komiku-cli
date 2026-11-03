@@ -36,6 +36,15 @@ function bounded(value: unknown, fallback: number, min: number, max: number) {
     : fallback
 }
 
+export const ZOOM_MIN = 60
+export const ZOOM_MAX = 200
+export const ZOOM_STEP = 10
+
+/** One keyboard or button zoom step, clamped to the slider range. */
+export function stepZoom(current: number, direction: -1 | 1): number {
+  return bounded(current + direction * ZOOM_STEP, DEFAULT_PREFS.zoom, ZOOM_MIN, ZOOM_MAX)
+}
+
 export function normalizePrefs(value: unknown): ReaderPrefs {
   const input = record(value)
   return {
@@ -46,7 +55,7 @@ export function normalizePrefs(value: unknown): ReaderPrefs {
     fit: ["width", "height", "original"].includes(String(input.fit))
       ? input.fit as ReaderFit : DEFAULT_PREFS.fit,
     gap: bounded(input.gap, DEFAULT_PREFS.gap, 0, 32),
-    zoom: bounded(input.zoom, DEFAULT_PREFS.zoom, 60, 200),
+    zoom: bounded(input.zoom, DEFAULT_PREFS.zoom, ZOOM_MIN, ZOOM_MAX),
     rightToLeft: typeof input.rightToLeft === "boolean" ? input.rightToLeft : DEFAULT_PREFS.rightToLeft,
     preloadNext: typeof input.preloadNext === "boolean" ? input.preloadNext : DEFAULT_PREFS.preloadNext,
     autoHideChrome: typeof input.autoHideChrome === "boolean" ? input.autoHideChrome : DEFAULT_PREFS.autoHideChrome,
@@ -85,7 +94,7 @@ export function pageDimensions(
   const widthScale = Math.max(1, viewport.width) / natural.width
   const heightScale = Math.min(widthScale, Math.max(1, viewport.height) / natural.height)
   const scale = (fit === "width" ? widthScale : fit === "height" ? heightScale : 1)
-    * bounded(zoom, 100, 60, 200) / 100
+    * bounded(zoom, 100, ZOOM_MIN, ZOOM_MAX) / 100
   return { width: Math.round(natural.width * scale), height: Math.round(natural.height * scale) }
 }
 

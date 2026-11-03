@@ -88,6 +88,10 @@ def start_vite(home: str, port: int) -> subprocess.Popen:
     env = {
         **os.environ,
         "HOME": home,
+        # The isolated HOME has no Corepack cache. Point it at the real one and
+        # disable the prompt, so pnpm never waits on an interactive download.
+        "COREPACK_HOME": os.path.join(os.path.expanduser("~"), ".cache", "node", "corepack"),
+        "COREPACK_ENABLE_DOWNLOAD_PROMPT": "0",
         "KOMIKU_CLI_BIN": str(REPO / "komiku-cli"),
         "KOMIKU_CLI_CWD": str(REPO),
     }
@@ -141,6 +145,35 @@ def run(page: Page, base: str) -> None:
     natural = image.evaluate("e => [e.naturalWidth, e.naturalHeight]")
     check("reader decodes a real page image", natural[0] == 800 and natural[1] == 1200, str(natural))
     check("page image uses a local blob", image.get_attribute("src").startswith("blob:"))
+
+    # --- zoom controls -----------------------------------------------------
+    check("zoom starts at 100%", page.locator("[data-zoom-level]").inner_text().strip() == "100%")
+    before = image.bounding_box()
+    page.locator('[data-nav="reader-zoom-in"]').click()
+    page.wait_for_timeout(250)
+    after = image.bounding_box()
+    level = page.locator("[data-zoom-level]").inner_text().strip()
+    check("zoom-in button raises the level", level == "110%", level)
+    check(
+        "zoom-in enlarges the page",
+        bool(before and after and after["width"] > before["width"]),
+        f"{before} -> {after}",
+    )
+
+    page.keyboard.press("Meta+Equal")
+    page.wait_for_timeout(250)
+    level = page.locator("[data-zoom-level]").inner_text().strip()
+    check("cmd-plus zooms in (macOS)", level == "120%", level)
+
+    page.keyboard.press("Control+Minus")
+    page.wait_for_timeout(250)
+    level = page.locator("[data-zoom-level]").inner_text().strip()
+    check("ctrl-minus zooms out (Windows/Linux)", level == "110%", level)
+
+    page.keyboard.press("Meta+0")
+    page.wait_for_timeout(250)
+    level = page.locator("[data-zoom-level]").inner_text().strip()
+    check("cmd-0 resets zoom", level == "100%", level)
 
     # --- keyboard and edge navigation ------------------------------------
     page.keyboard.press("ArrowRight")

@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState, useSyncExternalStore, type ReactNode } from "react"
 import * as Dialog from "@radix-ui/react-dialog"
 import { getCurrentWindow } from "@tauri-apps/api/window"
-import { BookOpen, Check, ChevronLeft, ChevronRight, Globe, HardDrive, List, Loader2, Maximize, Minimize, Search, Settings2, X } from "lucide-react"
+import { BookOpen, Check, ChevronLeft, ChevronRight, Globe, HardDrive, List, Loader2, Maximize, Minimize, Search, Settings2, X, ZoomIn, ZoomOut } from "lucide-react"
 import { toast } from "sonner"
 
 import { ReaderPageView } from "@/components/reader-page"
@@ -10,8 +10,8 @@ import { Switch } from "@/components/ui/switch"
 import { humanBytes, titleFromSlug } from "@/lib/api"
 import { isTauri } from "@/lib/cli"
 import { clearPageCache, loadReaderChapter, type ReaderReport } from "@/lib/reader"
-import { getProgress, getProgressSnapshot, progressKey, resetPrefs, setPrefs, setProgress, subscribeProgress, useReaderPrefs, type ReaderBackground, type ReaderFit, type ReadingMode } from "@/lib/reader-prefs"
-import { clampPage, turnPage, visiblePageNumbers } from "@/lib/reader-state"
+import { getPrefs, getProgress, getProgressSnapshot, progressKey, resetPrefs, setPrefs, setProgress, subscribeProgress, useReaderPrefs, type ReaderBackground, type ReaderFit, type ReadingMode } from "@/lib/reader-prefs"
+import { clampPage, stepZoom, turnPage, visiblePageNumbers } from "@/lib/reader-state"
 import { cn } from "@/lib/utils"
 
 const modes: { id: ReadingMode; label: string }[] = [
@@ -82,6 +82,7 @@ function ReaderSession({ slug, seriesURL, initialChapter, onBack, onOpenSeries }
   const idle = useRef<number | undefined>(undefined)
   const content = useRef<HTMLDivElement>(null)
   const strip = useRef<HTMLDivElement>(null)
+  const rootRef = useRef<HTMLDivElement>(null)
   const pageRef = useRef(page)
   const prefetched = useRef(new Set<string>())
   // A report for a previous request must never render under the new chapter.
@@ -214,6 +215,12 @@ function ReaderSession({ slug, seriesURL, initialChapter, onBack, onOpenSeries }
 
   function move(direction: -1 | 1) { goTo(turnPage(page, count, prefs.mode, direction)) }
 
+  // Read the live prefs instead of the render snapshot so repeated presses and
+  // rapid pinch events never work from a stale zoom level.
+  const zoomIn = useCallback(() => setPrefs({ zoom: stepZoom(getPrefs().zoom, 1) }), [])
+  const zoomOut = useCallback(() => setPrefs({ zoom: stepZoom(getPrefs().zoom, -1) }), [])
+  const resetZoom = useCallback(() => setPrefs({ zoom: 100 }), [])
+
   const toggleFullscreen = useCallback(async () => {
     try {
       if (isTauri) {
@@ -244,7 +251,24 @@ function ReaderSession({ slug, seriesURL, initialChapter, onBack, onOpenSeries }
   useEffect(() => {
     const keydown = (event: KeyboardEvent) => {
       const target = event.target as HTMLElement | null
-      if (event.defaultPrevented || event.metaKey || event.ctrlKey || event.altKey || target?.isContentEditable || target?.closest("input,textarea,select,[role=slider],[role=switch]")) return
+      if (event.defaultPrevented || event.altKey) return
+      const typing = Boolean(target?.isContentEditable || target?.closest("input,textarea,select,[role=slider],[role=switch]"))
+      const modified = event.metaKey || event.ctrlKey
+      // Cmd on macOS, Ctrl elsewhere. preventDefault stops the webview's own
+      // page zoom from intercepting the shortcut. Bare +, - and 0 work too
+      // when no field has focus.
+      const zoomInKey = event.key === "+" || (event.key === "=" && modified) || event.code === "NumpadAdd"
+      const zoomOutKey = event.key === "-" || event.key === "_" || event.code === "NumpadSubtract"
+      const zoomResetKey = event.key === "0" || event.code === "Numpad0"
+      if ((zoomInKey || zoomOutKey || zoomResetKey) && (modified || !typing)) {
+        event.preventDefault()
+        reveal()
+        if (zoomResetKey) resetZoom()
+        else if (zoomInKey) zoomIn()
+        else zoomOut()
+        return
+      }
+      if (modified || typing) return
       reveal()
       if (panel) return
       if (event.key === "Escape") {
@@ -265,6 +289,41 @@ function ReaderSession({ slug, seriesURL, initialChapter, onBack, onOpenSeries }
     window.addEventListener("keydown", keydown)
     return () => window.removeEventListener("keydown", keydown)
   })
+
+  useEffect(() => {
+    const element = rootRef.current
+    if (!element) return
+    // Chromium reports trackpad pinch as Ctrl+wheel; WebKit (the macOS
+    // desktop shell) reports gesture events. Both drive the same pref.
+    let steppedAt = 0
+    const onWheel = (event: WheelEvent) => {
+      if (!event.ctrlKey && !event.metaKey) return
+      event.preventDefault()
+      const now = performance.now()
+      if (now - steppedAt < 90) return
+      steppedAt = now
+      setPrefs({ zoom: stepZoom(getPrefs().zoom, event.deltaY < 0 ? 1 : -1) })
+    }
+    let gestureBase = 100
+    const onGestureStart = (event: Event) => {
+      event.preventDefault()
+      gestureBase = getPrefs().zoom
+    }
+    const onGestureChange = (event: Event) => {
+      const scale = (event as Event & { scale?: number }).scale
+      if (typeof scale !== "number") return
+      event.preventDefault()
+      setPrefs({ zoom: Math.round(gestureBase * scale) })
+    }
+    element.addEventListener("wheel", onWheel, { passive: false })
+    element.addEventListener("gesturestart", onGestureStart)
+    element.addEventListener("gesturechange", onGestureChange)
+    return () => {
+      element.removeEventListener("wheel", onWheel)
+      element.removeEventListener("gesturestart", onGestureStart)
+      element.removeEventListener("gesturechange", onGestureChange)
+    }
+  }, [])
 
   useEffect(() => {
     if (prefs.mode !== "strip" || !loadedChapter) return
@@ -316,7 +375,7 @@ function ReaderSession({ slug, seriesURL, initialChapter, onBack, onOpenSeries }
   const chromeClass = hidden ? "pointer-events-none opacity-0" : "opacity-100"
 
   return (
-    <div data-reader-root data-reader-background={prefs.background} className={cn("flex h-full flex-col overflow-hidden", backgroundClass[prefs.background])} onPointerMove={reveal} onPointerDown={reveal} onFocusCapture={reveal}>
+    <div ref={rootRef} data-reader-root data-reader-background={prefs.background} className={cn("flex h-full flex-col overflow-hidden", backgroundClass[prefs.background])} onPointerMove={reveal} onPointerDown={reveal} onFocusCapture={reveal}>
       <header data-tauri-drag-region="deep" data-reader-chrome="top" inert={hidden} className={cn("flex h-14 shrink-0 items-center gap-2.5 border-b border-border bg-sidebar px-4 text-foreground transition-opacity motion-reduce:transition-none", chromeClass)}>
         <IconButton label="Back to series" dataNav="reader-back" onClick={onBack}><ChevronLeft className="size-4" /></IconButton>
         <button onClick={() => onOpenSeries(slug, seriesURL)} className="max-w-[32vw] truncate text-sm font-medium hover:text-primary focus-visible:outline-2 focus-visible:outline-primary">{titleFromSlug(slug)}</button>
@@ -367,7 +426,12 @@ function ReaderSession({ slug, seriesURL, initialChapter, onBack, onOpenSeries }
           <input aria-label="Lompat ke halaman" type="range" min={1} max={Math.max(1, count)} value={page} disabled={!count} onChange={(event) => goTo(Number(event.target.value))} className="h-6 min-w-0 max-w-[520px] flex-1 accent-primary" />
           <span className="font-mono text-xs text-muted-foreground">{count ? Math.round(lastVisible / count * 100) : 0}%</span>
         </div>
-        <div className="hidden shrink-0 text-[10px] text-muted-foreground xl:block">← → halaman · J / K chapter · F fullscreen</div>
+        <div className="hidden shrink-0 text-[10px] text-muted-foreground xl:block">← → halaman · J / K chapter · F fullscreen · ⌘ +/-/0 zoom</div>
+        <div role="group" aria-label="Zoom" className="flex shrink-0 items-center gap-0.5 rounded-md bg-surface p-1">
+          <button type="button" aria-label="Zoom out" title="Zoom out (⌘−)" data-nav="reader-zoom-out" onClick={zoomOut} className="flex size-7 items-center justify-center rounded-[5px] text-muted-foreground hover:bg-muted hover:text-foreground focus-visible:outline-2 focus-visible:outline-primary"><ZoomOut className="size-3.5" /></button>
+          <button type="button" aria-label="Reset zoom" title="Reset zoom (⌘0)" data-nav="reader-zoom-reset" data-zoom-level onClick={resetZoom} className="min-w-11 rounded-[5px] px-1 font-mono text-[11px] tabular-nums text-muted-foreground hover:bg-muted hover:text-foreground focus-visible:outline-2 focus-visible:outline-primary">{prefs.zoom}%</button>
+          <button type="button" aria-label="Zoom in" title="Zoom in (⌘+)" data-nav="reader-zoom-in" onClick={zoomIn} className="flex size-7 items-center justify-center rounded-[5px] text-muted-foreground hover:bg-muted hover:text-foreground focus-visible:outline-2 focus-visible:outline-primary"><ZoomIn className="size-3.5" /></button>
+        </div>
         <div className="w-[186px] shrink-0"><Segments label="Reading mode" options={modes} value={prefs.mode} onChange={(mode) => setPrefs({ mode })} /></div>
         <Button className="shrink-0" data-nav="reader-next-chapter" disabled={!report?.next} onClick={() => goChapter(1)}>{report?.next ? `Ch. ${report.next.display}` : "Akhir"}<ChevronRight className="size-4" /></Button>
       </footer>

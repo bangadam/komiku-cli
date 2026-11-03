@@ -7,6 +7,7 @@ import (
 	"io"
 	"os"
 	"os/signal"
+	"sort"
 	"strings"
 	"syscall"
 
@@ -45,7 +46,7 @@ func newRootCommand(input io.Reader, stdout, stderr io.Writer) *cobra.Command {
 	root.Args = cobra.ArbitraryArgs
 	root.RunE = func(cmd *cobra.Command, args []string) error {
 		if len(args) > 0 {
-			fmt.Fprintf(cmd.ErrOrStderr(), "unknown command %q; expected tui, dl, pack, send, config, search, or info\n", args[0])
+			fmt.Fprintf(cmd.ErrOrStderr(), "unknown command %q; expected one of: %s\n", args[0], strings.Join(commandNames(cmd.Root()), ", "))
 			return exitError{2}
 		}
 		dependencies, err := tuiDependencies(output, cmd.Flags().Changed("out"))
@@ -58,6 +59,22 @@ func newRootCommand(input io.Reader, stdout, stderr io.Writer) *cobra.Command {
 	root.Flags().StringVar(&output, "out", "", "output directory for this run")
 	root.AddCommand(newTUICommand())
 	return root
+}
+
+// commandNames lists the root command's subcommands, excluding Cobra's
+// built-in help and completion commands, so the unknown-command hint always
+// matches the real command tree.
+func commandNames(root *cobra.Command) []string {
+	names := make([]string, 0, len(root.Commands()))
+	for _, cmd := range root.Commands() {
+		name := cmd.Name()
+		if name == "" || name == "help" || name == "completion" {
+			continue
+		}
+		names = append(names, name)
+	}
+	sort.Strings(names)
+	return names
 }
 
 func newTUICommand() *cobra.Command {

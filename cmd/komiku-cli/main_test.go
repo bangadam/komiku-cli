@@ -58,3 +58,21 @@ func TestRootCommandRoutesUnknownCommandsToConfiguredStderr(t *testing.T) {
 		t.Fatalf("stdout=%q stderr=%q", stdout.String(), stderr.String())
 	}
 }
+
+func TestUnknownCommandHintMatchesCommandTree(t *testing.T) {
+	var stdout, stderr bytes.Buffer
+	root := newRootCommand(strings.NewReader(""), &stdout, &stderr)
+	root.SetArgs([]string{"frob"})
+	if err := root.ExecuteContext(context.Background()); err == nil {
+		t.Fatal("expected usage error")
+	}
+	hint := stderr.String()
+	for _, want := range []string{"catalog", "config", "cover", "dl", "genre", "genres", "info", "latest", "library", "new", "pack", "random", "ranking", "read", "search", "tui", "trending", "update", "verify"} {
+		if !strings.Contains(hint, want) {
+			t.Fatalf("unknown-command hint missing %q: %q", want, hint)
+		}
+	}
+	if strings.Contains(hint, "send") {
+		t.Fatalf("unknown-command hint mentions non-existent command \"send\": %q", hint)
+	}
+}

@@ -26,8 +26,10 @@ import (
 
 const dlCommandUsage = "usage: komiku-cli dl <series-url> [--ch RANGE|all|missing|latest:N | --vol RANGE] --no-tui [--flat] [--pack --preset medium|small|tiny|raw]"
 
-// Version is reported by --version. Binary builds fall back to "devel".
-const Version = "0.2.0"
+// Version is the fallback reported by --version. Release builds override it
+// with -ldflags "-X github.com/bangadam/komiku-cli/cli.Version=<tag>"; the
+// module version recorded by the Go toolchain still wins in VersionString.
+var Version = "0.9.0"
 
 // VersionString prefers the module version recorded by the Go toolchain.
 func VersionString() string {

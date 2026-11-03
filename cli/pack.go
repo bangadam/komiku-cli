@@ -203,7 +203,7 @@ func PreparePackSources(seriesDir, series string, preset packer.Preset, mappings
 func preparePackSources(seriesDir, sourceRoot, series string, preset packer.Preset, mappings []komiku.Volume, sources []PackChapterSource) PackPlan {
 	plan := PackPlan{Preset: preset}
 	if len(mappings) == 0 {
-		plan.DisabledReason = "Pack needs a volume mapping."
+		plan.DisabledReason = "Packing needs a volume mapping."
 		return plan
 	}
 	sourcesByVolume := make(map[int][]PackChapterSource, len(mappings))
@@ -270,7 +270,7 @@ func preparePackSources(seriesDir, sourceRoot, series string, preset packer.Pres
 		plan.Volumes = append(plan.Volumes, packer.Volume{SeriesDir: seriesDir, SourceRoot: sourceRoot, Series: series, Number: mapping.Volume, Chapters: chapters})
 	}
 	if len(plan.Volumes) == 0 {
-		plan.DisabledReason = "No mapped volume has every required chapter and page."
+		plan.DisabledReason = "No selected volume has every chapter and page on disk."
 	}
 	return plan
 }

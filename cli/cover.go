@@ -31,7 +31,7 @@ func NewCoverCommand(dependencies Dependencies) *cobra.Command {
 	var all, asJSON, force bool
 	cmd := &cobra.Command{
 		Use:   "cover [series-url]",
-		Short: "Save series cover art into the local library",
+		Short: "Save cover art for a series",
 		Args:  cobra.MaximumNArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			return runCover(cmd.Context(), args, all, asJSON, force, cmd.Flags(), cmd.OutOrStdout(), dependencies)

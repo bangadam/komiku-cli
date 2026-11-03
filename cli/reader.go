@@ -65,7 +65,7 @@ type ReaderReport struct {
 
 func NewReadCommand(dependencies Dependencies) *cobra.Command {
 	cmd := &cobra.Command{
-		Use: "read <series-url>", Short: "List the pages of a chapter for online or offline reading",
+		Use: "read <series-url>", Short: "Resolve a chapter's pages for online or offline reading",
 		Args: exactOneArg(readCommandUsage),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			return runRead(cmd.Context(), args[0], cmd.Flags(), cmd.OutOrStdout(), dependencies)

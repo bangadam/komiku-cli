@@ -48,7 +48,7 @@ func NewRankingCommand(dependencies Dependencies) *cobra.Command {
 			return runRanking(cmd.Context(), period, asJSON, cmd.OutOrStdout(), dependencies)
 		},
 	}
-	cmd.Flags().StringVar(&period, "period", "harian", "ranking period: harian, mingguan, bulanan or total")
+	cmd.Flags().StringVar(&period, "period", "daily", "ranking period: daily, weekly, monthly, or all")
 	cmd.Flags().BoolVar(&asJSON, "json", false, "print results as JSON")
 	return cmd
 }
@@ -74,7 +74,7 @@ func NewTrendingCommand(dependencies Dependencies) *cobra.Command {
 	var asJSON bool
 	cmd := &cobra.Command{
 		Use:   "trending",
-		Short: "Show the realtime trending titles",
+		Short: "Show trending titles in real time",
 		Args:  cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			return runTrending(cmd.Context(), period, limit, asJSON, cmd.OutOrStdout(), dependencies)
@@ -177,7 +177,7 @@ func NewCatalogCommand(dependencies Dependencies) *cobra.Command {
 	var asJSON bool
 	cmd := &cobra.Command{
 		Use:   "catalog",
-		Short: "Browse the A–Z comic catalogue",
+		Short: "Browse the A–Z title catalogue",
 		Args:  cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			return runCatalog(cmd.Context(), letter, kind, status, page, asJSON, cmd.OutOrStdout(), dependencies)
@@ -185,7 +185,7 @@ func NewCatalogCommand(dependencies Dependencies) *cobra.Command {
 	}
 	cmd.Flags().StringVar(&letter, "letter", "", "filter by initial letter, e.g. A or #")
 	cmd.Flags().StringVar(&kind, "type", "", "filter by type: manga, manhwa or manhua")
-	cmd.Flags().StringVar(&status, "status", "", "filter by status, e.g. ongoing or tamat")
+	cmd.Flags().StringVar(&status, "status", "", "filter by status, for example ongoing or completed")
 	cmd.Flags().IntVar(&page, "page", 1, "page number")
 	cmd.Flags().BoolVar(&asJSON, "json", false, "print results as JSON")
 	return cmd

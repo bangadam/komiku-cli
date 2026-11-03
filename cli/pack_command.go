@@ -33,7 +33,7 @@ func NewPackCommand(dependencies Dependencies) *cobra.Command {
 	}
 	cmd.Flags().String("vol", "", "volume list/range")
 	cmd.Flags().String("preset", DefaultPreset, "pack preset")
-	cmd.Flags().Bool("recover-wikipedia", false, "recover a legacy flat run from English Wikipedia")
+	cmd.Flags().Bool("recover-wikipedia", false, "rebuild volume boundaries with English Wikipedia")
 	cmd.Flags().String("wikipedia-title", "", "English Wikipedia series title override")
 	cmd.Flags().Bool("flat", false, "pack flat chapter directories into one CBZ without volume mapping")
 	cmd.Flags().String("series", "", "series display name for --flat (defaults to the directory name)")
@@ -320,9 +320,9 @@ func packWithRecovery(ctx context.Context, stdout io.Writer, seriesDir string, o
 		return errors.Join(fmt.Errorf("save recovered pack manifest: %w", err), cleanupErr)
 	}
 	if strings.Contains(recovery.SourceURL, "wikipedia.org") {
-		fmt.Fprintf(stdout, "Wikipedia source: %s title=%q\n", recovery.SourceURL, recovery.Title)
+		fmt.Fprintf(stdout, "Wikipedia source: %s (title: %q)\n", recovery.SourceURL, recovery.Title)
 	} else {
-		fmt.Fprintf(stdout, "volume mapping source: %s title=%q\n", recovery.SourceURL, recovery.Title)
+		fmt.Fprintf(stdout, "volume mapping source: %s (title: %q)\n", recovery.SourceURL, recovery.Title)
 	}
 	if len(recovery.Ignored) > 0 {
 		label := "ignored local chapters outside --vol"

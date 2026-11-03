@@ -39,7 +39,7 @@ func NewUpdateCommand(dependencies Dependencies) *cobra.Command {
 	)
 	cmd := &cobra.Command{
 		Use:   "update",
-		Short: "Download new chapters across all downloaded series in the local library",
+		Short: "Download new chapters for every series in the library",
 		Args:  cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			return runUpdate(cmd.Context(), dryRun, asJSON, cmd.Flags(), cmd.OutOrStdout(), dependencies)

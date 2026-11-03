@@ -98,7 +98,7 @@ func (m model) renderLayout(lines []string) string {
 }
 
 func (m model) layoutWidths() (int, int) {
-	sidebar := min(16, max(m.width-12, 6))
+	sidebar := min(20, max(m.width-12, 6))
 	return sidebar, max(m.width-sidebar-9, 1)
 }
 
@@ -111,7 +111,7 @@ func (m model) sidebarLines() []string {
 			lines = append(lines, "  "+label)
 		}
 	}
-	lines = append(lines, "Tab/ShiftTab nav")
+	lines = append(lines, "Tab/Shift+Tab: menu")
 	if m.outputRoot != "" {
 		lines = append(lines, "", "Save to:", m.outputRoot)
 	}
@@ -139,7 +139,7 @@ func (m model) settingsView() []string {
 	if m.settingsCursor == 2 {
 		preset = m.accent("> CBZ preset: " + string(m.settingsPreset))
 	}
-	lines = append(lines, preset, "    Left/Right changes quality.")
+	lines = append(lines, preset, "    Left/Right change the preset.")
 	if m.err != nil {
 		lines = append(lines, "", "[ERROR] "+m.err.Error())
 	}
@@ -245,7 +245,7 @@ func (m model) packRecoveryView() []string {
 		m.accent("> Enter  Continue and pack"),
 		"  Esc    Go back",
 		"",
-		"Tab nav  q quit",
+		"Tab: menu  q: quit",
 	}
 }
 
@@ -296,7 +296,7 @@ func (m model) searchView() []string {
 			}
 			lines = append(lines, line)
 		}
-		lines = append(lines, "", "Up/Down move  Enter open  Esc edit  Tab nav  q quit")
+		lines = append(lines, "", "Up/Down move  Enter open  Esc edit  Tab: menu  q: quit")
 	default:
 		lines = append(lines, "", "Enter searches titles. An HTTP(S) URL opens chapters directly.", "Tab switches the side menu. Ctrl+C quits.")
 	}
@@ -447,7 +447,7 @@ func (m model) rangeView() []string {
 		m.heading("komiku-cli / Range"),
 		"",
 		"> Mode: " + strings.Join(modeLabels, "  "),
-		"Tab/Left/Right changes mode. Escape cancels.",
+		"Tab/Left/Right change the mode. Escape cancels.",
 		"",
 	}
 	switch m.rangeMode {

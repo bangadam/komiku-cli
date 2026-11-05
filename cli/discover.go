@@ -10,7 +10,7 @@ import (
 
 	"github.com/spf13/cobra"
 
-	"github.com/bangadam/komiku-cli/komiku"
+	"github.com/bangadam/komiku-cli/kiryuu"
 )
 
 // FeedReport is the headless shape of the latest-chapter and newest-title
@@ -21,7 +21,7 @@ type FeedReport struct {
 	Genre  string                   `json:"genre,omitempty"`
 	Genre2 string                   `json:"genre2,omitempty"`
 	Page   int                      `json:"page"`
-	Series []komiku.DiscoverySeries `json:"series"`
+	Series []kiryuu.DiscoverySeries `json:"series"`
 }
 
 // FeedOptions is the CLI-level shape of one catalogue page request.
@@ -42,19 +42,19 @@ func NewRankingCommand(dependencies Dependencies) *cobra.Command {
 	var asJSON bool
 	cmd := &cobra.Command{
 		Use:   "ranking",
-		Short: "Show the Komiku ranking boards",
+		Short: "Show the all-time popularity ranking",
 		Args:  cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			return runRanking(cmd.Context(), period, asJSON, cmd.OutOrStdout(), dependencies)
 		},
 	}
-	cmd.Flags().StringVar(&period, "period", "daily", "ranking period: daily, weekly, monthly, or all")
+	cmd.Flags().StringVar(&period, "period", "all", "accepted for compatibility; Kiryuu serves one all-time board")
 	cmd.Flags().BoolVar(&asJSON, "json", false, "print results as JSON")
 	return cmd
 }
 
 func runRanking(ctx context.Context, period string, asJSON bool, stdout io.Writer, dependencies Dependencies) error {
-	client := dependencies.newKomikuClient(0)
+	client := dependencies.newKiryuuClient(0)
 	series, err := client.Ranking(ctx, period)
 	if err != nil {
 		return fmt.Errorf("ranking: %w", err)
@@ -74,20 +74,20 @@ func NewTrendingCommand(dependencies Dependencies) *cobra.Command {
 	var asJSON bool
 	cmd := &cobra.Command{
 		Use:   "trending",
-		Short: "Show trending titles in real time",
+		Short: "Show recently updated titles",
 		Args:  cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			return runTrending(cmd.Context(), period, limit, asJSON, cmd.OutOrStdout(), dependencies)
 		},
 	}
-	cmd.Flags().StringVar(&period, "period", "24h", "trending window: 24h, 7d, 30d or active")
+	cmd.Flags().StringVar(&period, "period", "24h", "accepted for compatibility; Kiryuu's board lists recent updates")
 	cmd.Flags().IntVar(&limit, "limit", 40, "maximum number of titles")
 	cmd.Flags().BoolVar(&asJSON, "json", false, "print results as JSON")
 	return cmd
 }
 
 func runTrending(ctx context.Context, period string, limit int, asJSON bool, stdout io.Writer, dependencies Dependencies) error {
-	client := dependencies.newKomikuClient(0)
+	client := dependencies.newKiryuuClient(0)
 	report, err := client.Trending(ctx, period, limit)
 	if err != nil {
 		return fmt.Errorf("trending: %w", err)
@@ -143,8 +143,8 @@ func NewRandomCommand(dependencies Dependencies) *cobra.Command {
 }
 
 func runFeed(ctx context.Context, options FeedOptions, asJSON bool, stdout io.Writer, dependencies Dependencies) error {
-	client := dependencies.newKomikuClient(0)
-	series, err := client.Browse(ctx, komiku.FeedOptions{
+	client := dependencies.newKiryuuClient(0)
+	series, err := client.Browse(ctx, kiryuu.FeedOptions{
 		Order:  options.Order,
 		Type:   options.Type,
 		Genre:  options.Genre,
@@ -177,13 +177,13 @@ func NewCatalogCommand(dependencies Dependencies) *cobra.Command {
 	var asJSON bool
 	cmd := &cobra.Command{
 		Use:   "catalog",
-		Short: "Browse the A–Z title catalogue",
+		Short: "Browse the title catalogue",
 		Args:  cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			return runCatalog(cmd.Context(), letter, kind, status, page, asJSON, cmd.OutOrStdout(), dependencies)
 		},
 	}
-	cmd.Flags().StringVar(&letter, "letter", "", "filter by initial letter, e.g. A or #")
+	cmd.Flags().StringVar(&letter, "letter", "", "accepted for compatibility; Kiryuu has no letter filter")
 	cmd.Flags().StringVar(&kind, "type", "", "filter by type: manga, manhwa or manhua")
 	cmd.Flags().StringVar(&status, "status", "", "filter by status, for example ongoing or completed")
 	cmd.Flags().IntVar(&page, "page", 1, "page number")
@@ -194,14 +194,14 @@ func NewCatalogCommand(dependencies Dependencies) *cobra.Command {
 func runCatalog(ctx context.Context, letter, kind, status string, page int, asJSON bool, stdout io.Writer, dependencies Dependencies) error {
 	want := ""
 	if status != "" {
-		want = komiku.NormalizeStatus(status)
+		want = kiryuu.NormalizeStatus(status)
 		switch want {
 		case "Completed", "Ongoing", "Hiatus":
 		default:
 			return fmt.Errorf("catalog: unknown status %q: use ongoing, completed, or hiatus", status)
 		}
 	}
-	client := dependencies.newKomikuClient(0)
+	client := dependencies.newKiryuuClient(0)
 	report, err := client.Catalog(ctx, letter, kind, status, page)
 	if err != nil {
 		return fmt.Errorf("catalog: %w", err)
@@ -210,11 +210,11 @@ func runCatalog(ctx context.Context, letter, kind, status string, page int, asJS
 	report.Type = kind
 	report.Status = status
 	if want != "" {
-		// komiku.org ignores the status parameter, so the filter is applied
-		// to the fetched page here; totals describe the matches shown.
-		kept := make([]komiku.DiscoverySeries, 0, len(report.Series))
+		// Kiryuu has no status filter on this endpoint, so the filter is
+		// applied to the fetched page here; totals describe the matches shown.
+		kept := make([]kiryuu.DiscoverySeries, 0, len(report.Series))
 		for _, entry := range report.Series {
-			if komiku.NormalizeStatus(entry.Status) == want {
+			if kiryuu.NormalizeStatus(entry.Status) == want {
 				kept = append(kept, entry)
 			}
 		}
@@ -238,7 +238,7 @@ func NewGenresCommand(dependencies Dependencies) *cobra.Command {
 		Short: "List every genre and its title count",
 		Args:  cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, args []string) error {
-			client := dependencies.newKomikuClient(0)
+			client := dependencies.newKiryuuClient(0)
 			genres, err := client.Genres(cmd.Context())
 			if err != nil {
 				return fmt.Errorf("genres: %w", err)
@@ -270,7 +270,7 @@ func NewGenreCommand(dependencies Dependencies) *cobra.Command {
 			return nil
 		},
 		RunE: func(cmd *cobra.Command, args []string) error {
-			client := dependencies.newKomikuClient(0)
+			client := dependencies.newKiryuuClient(0)
 			series, err := client.GenreSeries(cmd.Context(), args[0], sort, kind, page)
 			if err != nil {
 				return fmt.Errorf("genre %s: %w", args[0], err)

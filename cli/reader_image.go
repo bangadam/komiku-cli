@@ -15,7 +15,7 @@ import (
 
 	_ "golang.org/x/image/webp"
 
-	"github.com/bangadam/komiku-cli/komiku"
+	"github.com/bangadam/komiku-cli/kiryuu"
 )
 
 type readerContextReader struct {
@@ -45,7 +45,7 @@ func readerImageInfo(ctx context.Context, file *os.File) (int64, string, error) 
 	if _, err := io.ReadFull(file, header[:]); err != nil {
 		return 0, "", err
 	}
-	if _, valid := komiku.DetectImage(header[:]); !valid {
+	if _, valid := kiryuu.DetectImage(header[:]); !valid {
 		return 0, "", errors.New("invalid image payload")
 	}
 	hash := sha256.New()

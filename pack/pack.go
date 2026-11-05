@@ -17,7 +17,7 @@ import (
 	"strconv"
 	"strings"
 
-	"github.com/bangadam/komiku-cli/komiku"
+	"github.com/bangadam/komiku-cli/kiryuu"
 	"github.com/bangadam/komiku-cli/store"
 	"golang.org/x/image/draw"
 	_ "golang.org/x/image/webp"
@@ -425,7 +425,7 @@ func chapterPages(root *os.Root, chapter Chapter, preset Preset) ([]page, int64,
 	return pages, totalBytes, nil
 }
 
-func inspectPage(root *os.Root, filename string, preset Preset) (komiku.ImageFormat, int64, os.FileInfo, error) {
+func inspectPage(root *os.Root, filename string, preset Preset) (kiryuu.ImageFormat, int64, os.FileInfo, error) {
 	file, info, err := openRegularSource(root, filename, nil)
 	if err != nil {
 		return "", 0, nil, err
@@ -439,7 +439,7 @@ func inspectPage(root *os.Root, filename string, preset Preset) (komiku.ImageFor
 	if readErr != nil && readErr != io.ErrUnexpectedEOF {
 		return "", 0, nil, readErr
 	}
-	format, valid := komiku.DetectImage(header[:n])
+	format, valid := kiryuu.DetectImage(header[:n])
 	if !valid {
 		return "", 0, nil, fmt.Errorf("invalid image: %s is not a valid image", filename)
 	}
@@ -509,7 +509,7 @@ func addStoredImage(root *os.Root, archive *zip.Writer, name string, source page
 	if readErr != nil && readErr != io.ErrUnexpectedEOF {
 		return readErr
 	}
-	format, valid := komiku.DetectImage(header[:n])
+	format, valid := kiryuu.DetectImage(header[:n])
 	if !valid || "."+string(format) != source.ext {
 		return fmt.Errorf("page source format changed: %s", source.path)
 	}

@@ -12,38 +12,37 @@ import (
 	"strconv"
 	"strings"
 
-	"github.com/bangadam/komiku-cli/komiku"
+	"github.com/bangadam/komiku-cli/kiryuu"
 	"github.com/bangadam/komiku-cli/store"
 )
 
-var readerRawPattern = regexp.MustCompile(`^[0-9]+(?:-[0-9]+)?$`)
+var readerRawPattern = regexp.MustCompile(`^[0-9]+(?:[-.][0-9]+)?$`)
 var readerDisplayPattern = regexp.MustCompile(`^[0-9]+(?:\.[0-9]+)?$`)
 
-func readerRawChapter(raw string) (komiku.Chapter, error) {
-	if len(raw) > 80 || !readerRawPattern.MatchString(raw) {
-		return komiku.Chapter{}, fmt.Errorf("invalid raw chapter identity %q", raw)
+// readerChapterIdentity rebuilds a chapter from its on-disk identity: the
+// display number and, when the directory records one, the source raw ID.
+// Kiryuu bookmarks older local layouts by number alone, so a missing raw ID is
+// synthesized from the display fraction ("79.2" -> "79-2").
+func readerChapterIdentity(display, raw string) (kiryuu.Chapter, error) {
+	if !readerDisplayPattern.MatchString(display) {
+		return kiryuu.Chapter{}, fmt.Errorf("invalid chapter display %q", display)
 	}
-	number, err := strconv.ParseFloat(strings.Replace(raw, "-", ".", 1), 64)
+	number, err := strconv.ParseFloat(display, 64)
 	if err != nil || math.IsInf(number, 0) || number > 1e9 {
-		return komiku.Chapter{}, errors.New("chapter number exceeds reader limit")
+		return kiryuu.Chapter{}, errors.New("chapter number exceeds reader limit")
 	}
-	parts := strings.SplitN(raw, "-", 2)
-	display := strings.TrimLeft(parts[0], "0")
-	if display == "" {
-		display = "0"
+	normalized := strconv.FormatFloat(number, 'f', -1, 64)
+	if raw == "" {
+		raw = strings.Replace(normalized, ".", "-", 1)
 	}
-	if len(parts) == 2 {
-		fraction := strings.TrimRight(parts[1], "0")
-		if fraction == "" {
-			fraction = "0"
-		}
-		display += "." + fraction
+	if len(raw) > 80 || !readerRawPattern.MatchString(raw) {
+		return kiryuu.Chapter{}, fmt.Errorf("invalid raw chapter identity %q", raw)
 	}
-	return komiku.Chapter{RawID: raw, Display: display, Number: number}, nil
+	return kiryuu.Chapter{RawID: raw, Display: normalized, Number: number}, nil
 }
 
 type readerLocalChapter struct {
-	chapter komiku.Chapter
+	chapter kiryuu.Chapter
 	dir     string
 	raw     bool
 }
@@ -69,14 +68,11 @@ func (fs *readerFS) chapters() ([]readerLocalChapter, error) {
 				continue
 			}
 			parts := strings.SplitN(strings.TrimPrefix(name, "chapter-"), "-raw-", 2)
-			if !readerDisplayPattern.MatchString(parts[0]) {
-				continue
-			}
-			raw := strings.Replace(parts[0], ".", "-", 1)
+			raw := ""
 			if len(parts) == 2 {
 				raw = parts[1]
 			}
-			chapter, err := readerRawChapter(raw)
+			chapter, err := readerChapterIdentity(parts[0], raw)
 			if err != nil || store.FormatChapter(chapter.Display) != parts[0] {
 				continue
 			}
@@ -100,7 +96,7 @@ func (fs *readerFS) chapters() ([]readerLocalChapter, error) {
 	return result, nil
 }
 
-func mergeReaderLocalChapters(chapters []komiku.Chapter, local []readerLocalChapter) []komiku.Chapter {
+func mergeReaderLocalChapters(chapters []kiryuu.Chapter, local []readerLocalChapter) []kiryuu.Chapter {
 	for _, item := range local {
 		found := false
 		for _, ch := range chapters {
@@ -122,7 +118,7 @@ func mergeReaderLocalChapters(chapters []komiku.Chapter, local []readerLocalChap
 	return chapters
 }
 
-func (fs *readerFS) libraryPages(ctx context.Context, local []readerLocalChapter, chapter komiku.Chapter, ambiguous bool) (map[int]ReaderPage, error) {
+func (fs *readerFS) libraryPages(ctx context.Context, local []readerLocalChapter, chapter kiryuu.Chapter, ambiguous bool) (map[int]ReaderPage, error) {
 	result := map[int]ReaderPage{}
 	for _, item := range local {
 		if item.chapter.Number != chapter.Number || (item.raw && item.chapter.RawID != chapter.RawID) || (!item.raw && ambiguous) {
@@ -198,7 +194,7 @@ func (fs *readerFS) pages(ctx context.Context, dir string) (map[int]ReaderPage, 
 
 // Small compatibility helpers for local callers/tests. The command uses the
 // confined readerFS directly so safety errors are not discarded.
-func localChapters(seriesDir string) ([]komiku.Chapter, error) {
+func localChapters(seriesDir string) ([]kiryuu.Chapter, error) {
 	fs, err := openReaderFS(filepath.Dir(seriesDir), filepath.Base(seriesDir), false)
 	if err != nil {
 		return nil, err

@@ -11,7 +11,7 @@ import subprocess
 import tempfile
 import threading
 import time
-from urllib.parse import urlsplit
+from urllib.parse import parse_qs, urlsplit
 import struct
 import zlib
 import zipfile
@@ -108,20 +108,36 @@ def main():
             port = self.server.server_address[1]
             origin = f"http://127.0.0.1:{port}"
 
-            html_routes = {
-                "/manga/extra-series/": '<a href="/different-prefix-chapter-271-5/"></a>',
-                "/different-prefix-chapter-271-5/": f'<img class="klazy" data-src="{origin}/wrong-thumbnail.jpg" src="{origin}/extra page.jpg?token=1">',
-                "/manga/gap-series/": '<a href="/gap-prefix-chapter-1/"></a>',
-                "/gap-prefix-chapter-1/": f'<img class="klazy" src="{origin}/gap-one.jpg"><img class="klazy" src="{origin}/gap-two.png">',
-                "/manga/volume-series/": '<a href="/volume-prefix-chapter-1/"></a><a href="/volume-prefix-chapter-2/"></a>',
-                "/volume-prefix-chapter-1/": f'<img class="klazy" src="{origin}/volume-one.jpeg">',
-                "/volume-prefix-chapter-2/": f'<img class="ww" src="{origin}/volume-two.png">',
-                "/manga/medium-series/": '<a href="/medium-prefix-chapter-1/"></a><a href="/medium-prefix-chapter-2/"></a>',
-                "/medium-prefix-chapter-1/": f'<img class="klazy" src="{origin}/medium-large.png">',
-                "/medium-prefix-chapter-2/": f'<img class="ww" src="{origin}/medium-truncated.jpeg">',
+            series_pages = {
+                "/manga/extra-series/": [("271.5", "1001")],
+                "/manga/gap-series/": [("1", "2001")],
+                "/manga/volume-series/": [("1", "3001"), ("2", "3002")],
+                "/manga/medium-series/": [("1", "4001"), ("2", "4002")],
             }
-            if request_path in html_routes:
-                self.respond(200, html_routes[request_path].encode())
+            if request_path in series_pages:
+                anchors = "".join(
+                    f'<a href="{request_path}chapter-{number}.{chapter_id}/">Chapter {number}</a>'
+                    for number, chapter_id in series_pages[request_path])
+                self.respond(200, anchors.encode())
+                return
+            chapter_pages = {
+                "1001": f'<img src="{origin}/extra page.jpg?token=1">',
+                "2001": f'<img src="{origin}/gap-one.jpg"><img src="{origin}/gap-two.png">',
+                "3001": f'<img src="{origin}/volume-one.jpeg">',
+                "3002": f'<img src="{origin}/volume-two.png">',
+                "4001": f'<img src="{origin}/medium-large.png">',
+                "4002": f'<img src="{origin}/medium-truncated.jpeg">',
+            }
+            if request_path == "/wp-json/kiru/v1/chapter":
+                chapter_id = (parse_qs(urlsplit(self.path).query).get("id") or [""])[0]
+                payload = {
+                    "id": int(chapter_id or 0),
+                    "slug": f"chapter-{chapter_id}",
+                    "number": "0",
+                    "url": f"{origin}/manga/series/chapter-0.{chapter_id}/",
+                    "content": chapter_pages.get(chapter_id, ""),
+                }
+                self.respond(200, json.dumps(payload).encode(), "application/json")
                 return
 
             image_routes = {
@@ -137,25 +153,15 @@ def main():
             else:
                 body = image_routes.get(request_path)
             if body is not None:
-                expected_referer = {
-                    "/extra%20page.jpg": origin + "/different-prefix-chapter-271-5/",
-                    "/gap-one.jpg": origin + "/gap-prefix-chapter-1/",
-                    "/gap-two.png": origin + "/gap-prefix-chapter-1/",
-                    "/volume-one.jpeg": origin + "/volume-prefix-chapter-1/",
-                    "/volume-two.png": origin + "/volume-prefix-chapter-2/",
-                    "/medium-large.png": origin + "/medium-prefix-chapter-1/",
-                    "/medium-truncated.jpeg": origin + "/medium-prefix-chapter-2/",
-                }[request_path]
                 if not self.headers.get("User-Agent", "").startswith("Mozilla/5.0"):
                     header_failures.append(request_path + ": missing browser User-Agent")
-                if self.headers.get("Referer") != expected_referer:
-                    header_failures.append(request_path + ": wrong Referer")
                 self.respond(200, body)
                 return
             self.respond(404, b"not found")
 
-        def respond(self, status, body):
+        def respond(self, status, body, content_type="text/plain; charset=utf-8"):
             self.send_response(status)
+            self.send_header("Content-Type", content_type)
             self.send_header("Content-Length", str(len(body)))
             self.end_headers()
             self.wfile.write(body)
@@ -220,7 +226,7 @@ def main():
         require(not header_failures, "; ".join(header_failures))
         add_section("01 HEADLESS FLAT RAW EXTRA", "01-headless-download.png", extra_command, extra, [
             "raw 271-5 discovered through unrelated prefix and selected as 271.5",
-            "image path /extra%20page.jpg preserved query; browser User-Agent plus chapter Referer verified",
+            "image path /extra%20page.jpg preserved query; browser User-Agent verified",
             f"small valid JPEG accepted by magic bytes; source_sha256={sha256(SMALL_JPEG)}",
             "output extra-series/chapter-271.5/001.jpg has identical bytes",
             "state extra-series/.state.json equals {\"done\":[271.5]}",
@@ -232,13 +238,13 @@ def main():
         resume = run(extra_command, env)
         require(resume.returncode == 0, "DONE resume failed: " + resume.stderr)
         after_resume = {path: sum(1 for seen in requests if seen["path"] == path) for path in before_resume}
-        require(after_resume.get("/different-prefix-chapter-271-5/", 0) == before_resume.get("/different-prefix-chapter-271-5/", 0), "DONE resume fetched chapter HTML")
+        require(after_resume.get("/wp-json/kiru/v1/chapter", 0) == before_resume.get("/wp-json/kiru/v1/chapter", 0), "DONE resume refetched chapter pages")
         require(after_resume.get("/extra%20page.jpg", 0) == before_resume.get("/extra%20page.jpg", 0), "DONE resume refetched small image")
         require(len(list((output_root / "extra-series").glob("run-*.log"))) == 2, "rerun did not create unique audit log")
         add_section("02 DONE RESUME", "01-headless-download.png", extra_command, resume, [
             "series discovery reran for source-backed selection",
-            "DONE state prevented chapter HTML refetch",
-            "DONE state prevented small image refetch",
+            "series page refetched for selection; chapter pages were not",
+            "DONE state prevented chapter page list refetch",
             "second run created second unique audit log",
         ])
 
@@ -256,10 +262,10 @@ def main():
         require(sum(1 for item in requests if item["path"] == "/gap-two.png") == 5, "gap repair did not fetch only missing page")
         require((output_root / "gap-series" / "chapter-001" / "001.jpg").read_bytes() == GAP_JPEG, "preserved page changed")
         require((output_root / "gap-series" / "chapter-001" / "002.png").read_bytes() == GAP_PNG, "repaired page changed")
-        chapter_hits = sum(1 for item in requests if item["path"] == "/gap-prefix-chapter-1/")
+        chapter_hits = sum(1 for item in requests if item["path"] == "/wp-json/kiru/v1/chapter")
         gap_third = run(gap_command, env)
         require(gap_third.returncode == 0, "post-repair DONE resume failed")
-        require(sum(1 for item in requests if item["path"] == "/gap-prefix-chapter-1/") == chapter_hits, "post-repair DONE fetched chapter HTML")
+        require(sum(1 for item in requests if item["path"] == "/wp-json/kiru/v1/chapter") == chapter_hits, "post-repair DONE fetched chapter pages")
         require(sum(1 for item in requests if item["path"] == "/gap-one.jpg") == 1, "post-repair DONE refetched page one")
         require(sum(1 for item in requests if item["path"] == "/gap-two.png") == 5, "post-repair DONE refetched page two")
         require(len(list((output_root / "gap-series").glob("run-*.log"))) == 3, "gap runs lack unique logs")
@@ -270,7 +276,7 @@ def main():
             "first run returned expected nonzero PART (1/2)",
             "invalid page received initial attempt plus three retries",
             "repair rerun skipped valid page 001 and fetched only page 002",
-            "repaired chapter entered DONE; next rerun fetched no chapter HTML or image",
+            "repaired chapter entered DONE; next rerun fetched no chapter pages or image",
             "each run created one unique audit log",
         ])
 

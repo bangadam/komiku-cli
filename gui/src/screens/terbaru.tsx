@@ -134,7 +134,7 @@ export function LatestScreen({
           Auto-refresh 60s
         </button>
         <span className="mx-1 h-4 w-px bg-border" />
-        <BarMeta icon={Rss}>komiku.org/pustaka</BarMeta>
+        <BarMeta icon={Rss}>v7.kiryuu.to</BarMeta>
         <RefreshButton busy={feed.loading} onClick={feed.reload} />
       </DiscoveryBar>
 
@@ -145,7 +145,7 @@ export function LatestScreen({
               Latest Updates
             </h1>
             <p className="text-[13px] text-muted-foreground">
-              {formatCount(rows.length)} titles on this page · source komiku.org
+              {formatCount(rows.length)} titles on this page · source v7.kiryuu.to
             </p>
           </div>
         </div>

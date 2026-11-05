@@ -6,14 +6,14 @@ import (
 	"strconv"
 	"strings"
 
-	"github.com/bangadam/komiku-cli/komiku"
+	"github.com/bangadam/komiku-cli/kiryuu"
 )
 
-func SelectChapters(chapters []komiku.Chapter, expression string) ([]komiku.Chapter, error) {
+func SelectChapters(chapters []kiryuu.Chapter, expression string) ([]kiryuu.Chapter, error) {
 	if strings.TrimSpace(expression) == "" {
 		return nil, fmt.Errorf("--ch requires a chapter list or range")
 	}
-	selected := make(map[string]komiku.Chapter)
+	selected := make(map[string]kiryuu.Chapter)
 	for _, rawToken := range strings.Split(expression, ",") {
 		token := strings.TrimSpace(rawToken)
 		if token == "" {
@@ -38,7 +38,7 @@ func SelectChapters(chapters []komiku.Chapter, expression string) ([]komiku.Chap
 		}
 		selected[chapter.URL] = chapter
 	}
-	result := make([]komiku.Chapter, 0, len(selected))
+	result := make([]kiryuu.Chapter, 0, len(selected))
 	for _, chapter := range selected {
 		result = append(result, chapter)
 	}
@@ -54,25 +54,25 @@ func SelectChapters(chapters []komiku.Chapter, expression string) ([]komiku.Chap
 	return result, nil
 }
 
-func selectOneChapter(chapters []komiku.Chapter, token string) (komiku.Chapter, error) {
+func selectOneChapter(chapters []kiryuu.Chapter, token string) (kiryuu.Chapter, error) {
 	for _, chapter := range chapters {
 		if token == chapter.RawID {
 			return chapter, nil
 		}
 	}
 	display := strings.Replace(token, "-", ".", 1)
-	var match *komiku.Chapter
+	var match *kiryuu.Chapter
 	for i := range chapters {
 		if display != chapters[i].Display {
 			continue
 		}
 		if match != nil {
-			return komiku.Chapter{}, fmt.Errorf("chapter %q is ambiguous; choose raw ID %q or %q", token, match.RawID, chapters[i].RawID)
+			return kiryuu.Chapter{}, fmt.Errorf("chapter %q is ambiguous; choose raw ID %q or %q", token, match.RawID, chapters[i].RawID)
 		}
 		match = &chapters[i]
 	}
 	if match == nil {
-		return komiku.Chapter{}, fmt.Errorf("chapter %q was not found in series discovery", token)
+		return kiryuu.Chapter{}, fmt.Errorf("chapter %q was not found in series discovery", token)
 	}
 	return *match, nil
 }
@@ -90,7 +90,7 @@ func parseNumberRange(token string) (float64, float64, bool) {
 	return lo, hi, true
 }
 
-func SelectVolumes(chapters []komiku.Chapter, volumes []komiku.Volume, expression string) ([]Job, error) {
+func SelectVolumes(chapters []kiryuu.Chapter, volumes []kiryuu.Volume, expression string) ([]Job, error) {
 	wanted, err := parseIntegerSelection(expression)
 	if err != nil {
 		return nil, err
@@ -104,10 +104,10 @@ func SelectVolumes(chapters []komiku.Chapter, volumes []komiku.Volume, expressio
 			return nil, fmt.Errorf("volume %d is not present in mapping", volume)
 		}
 	}
-	selectedChapters := make([]komiku.Chapter, 0, len(chapters))
+	selectedChapters := make([]kiryuu.Chapter, 0, len(chapters))
 	jobs := make([]Job, 0, len(chapters))
 	for _, chapter := range chapters {
-		volume, ok := komiku.VolumeForChapter(chapter.Number, volumes)
+		volume, ok := kiryuu.VolumeForChapter(chapter.Number, volumes)
 		if ok && wanted[volume] {
 			jobs = append(jobs, Job{Chapter: chapter, Volume: volume})
 			selectedChapters = append(selectedChapters, chapter)
@@ -119,7 +119,7 @@ func SelectVolumes(chapters []komiku.Chapter, volumes []komiku.Volume, expressio
 	return jobs, nil
 }
 
-func rejectAmbiguousSelection(chapters []komiku.Chapter) error {
+func rejectAmbiguousSelection(chapters []kiryuu.Chapter) error {
 	seen := make(map[float64]string, len(chapters))
 	for _, chapter := range chapters {
 		if raw, exists := seen[chapter.Number]; exists && raw != chapter.RawID {

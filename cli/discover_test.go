@@ -10,50 +10,22 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/bangadam/komiku-cli/komiku"
+	"github.com/bangadam/komiku-cli/kiryuu"
 )
 
-const catalogStatusFixture = `<html><body>
-<section class="filter-tabs">
-<a href="https://komiku.org/daftar-komik/" class="active"> Semua </a>
-<a href="https://komiku.org/daftar-komik/?tipe=manga"> Manga </a>
-</section>
-<nav class="alphabet-nav">
-<a href="https://komiku.org/daftar-komik/" class="active"> All </a>
-<a href="https://komiku.org/daftar-komik/?huruf=%23"> # <span class="count">66</span> </a>
-</nav>
-<div class="manga-grid">
-<article class="manga-card">
-<a href="/manga/a-revenge-guide-for-the-terminally/">
-<img class="lazy" src="https://komiku.org/asset/img/lazy.jpg" data-src="https://thumbnail.komiku.to/img/upload/x.jpg?resize=160,220" alt=" A Revenge Guide ">
-</a>
-<div>
-<h4><a href="/manga/a-revenge-guide-for-the-terminally/"> A Revenge Guide for the Terminally </a></h4>
-<p class="meta"> Manhwa • Drama<br> Status: Ongoing </p>
-</div>
-</article>
-<article class="manga-card">
-<a href="/manga/b-finished-series/">
-<img class="lazy" src="https://komiku.org/asset/img/lazy.jpg" data-src="https://thumbnail.komiku.to/img/upload/y.jpg?resize=160,220" alt=" B Finished ">
-</a>
-<div>
-<h4><a href="/manga/b-finished-series/"> B Finished Series </a></h4>
-<p class="meta"> Manga • Action<br> Status: Tamat </p>
-</div>
-</article>
-</div>
-<div class="pagination">
-<span class="current">1</span>
-<a href="https://komiku.org/daftar-komik/?halaman=2">2</a>
-</div>
-<div class="page-info"> (7,894 komik) </div>
-<div class="page-info"> Halaman 1 dari 158 </div>
-</body></html>`
+// catalogStatusFixture serves one ongoing and one completed Kiryuu card. The
+// server ignores the status filter, so the CLI must filter the page itself.
+func catalogStatusFixture() string {
+	return `<html><body><div class="manga-grid">` +
+		kiryuuCard("/manga/a-revenge-guide-for-the-terminally/", "A Revenge Guide for the Terminally", "Ongoing") +
+		kiryuuCard("/manga/b-finished-series/", "B Finished Series", "Completed") +
+		`</div></body></html>`
+}
 
 func TestCatalogStatusFiltersCurrentPage(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "text/html")
-		_, _ = w.Write([]byte(catalogStatusFixture))
+		_, _ = w.Write([]byte(catalogStatusFixture()))
 	}))
 	t.Cleanup(server.Close)
 	root := t.TempDir()
@@ -76,7 +48,7 @@ func TestCatalogStatusFiltersCurrentPage(t *testing.T) {
 		if code != 0 {
 			t.Fatalf("status=%s code=%d stderr=%s", test.status, code, stderr.String())
 		}
-		var report komiku.CatalogReport
+		var report kiryuu.CatalogReport
 		if err := json.Unmarshal(stdout.Bytes(), &report); err != nil {
 			t.Fatalf("status=%s decode: %v", test.status, err)
 		}

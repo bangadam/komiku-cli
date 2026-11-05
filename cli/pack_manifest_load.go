@@ -6,7 +6,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"github.com/bangadam/komiku-cli/komiku"
+	"github.com/bangadam/komiku-cli/kiryuu"
 	"github.com/bangadam/komiku-cli/store"
 	"io"
 	"os"
@@ -168,7 +168,7 @@ func validatePackManifest(manifest PackManifest) error {
 		if len(manifest.SeriesURL) > 2048 {
 			return errors.New("pack manifest series URL is too long")
 		}
-		if _, err := komiku.ValidateSeriesURL(manifest.SeriesURL); err != nil {
+		if _, err := kiryuu.ValidateSeriesURL(manifest.SeriesURL); err != nil {
 			return fmt.Errorf("pack manifest series URL: %w", err)
 		}
 	}
@@ -243,7 +243,7 @@ func validatePackManifest(manifest PackManifest) error {
 			}
 		case "recovered-local":
 			if chapter.URL != "" || chapter.RawID != "" {
-				return fmt.Errorf("recovered local chapter %q must not claim Komiku identity", chapter.Display)
+				return fmt.Errorf("recovered local chapter %q must not claim a downloaded chapter identity", chapter.Display)
 			}
 		default:
 			return fmt.Errorf("pack manifest chapter %q has invalid identity provenance %q", chapter.Display, chapter.IdentityProvenance)

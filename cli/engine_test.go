@@ -13,7 +13,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/bangadam/komiku-cli/komiku"
+	"github.com/bangadam/komiku-cli/kiryuu"
 	"github.com/bangadam/komiku-cli/store"
 )
 
@@ -21,9 +21,10 @@ func TestEngineEventsAreOrderedAndFinishAfterAuditClose(t *testing.T) {
 	var server *httptest.Server
 	server = httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch r.URL.Path {
-		case "/chapter-1/", "/chapter-2/":
-			fmt.Fprintf(w, `<img class="klazy" src="%s%s.jpg">`, server.URL, r.URL.Path)
-		case "/chapter-1/.jpg", "/chapter-2/.jpg":
+		case "/wp-json/kiru/v1/chapter":
+			slug := r.URL.Query().Get("slug")
+			fmt.Fprint(w, kiryuuChapterObjectJSON("series", "101", "1", server.URL, fmt.Sprintf(`<img src="%s/%s.jpg">`, server.URL, slug)))
+		case "/chapter-1.jpg", "/chapter-2.jpg":
 			_, _ = w.Write(append([]byte{0xff, 0xd8}, []byte("image")...))
 		default:
 			http.NotFound(w, r)
@@ -34,10 +35,11 @@ func TestEngineEventsAreOrderedAndFinishAfterAuditClose(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	client := komiku.NewClient(server.Client(), 0)
+	client := kiryuu.NewClient(server.Client(), 0)
+	client.BaseURL = server.URL
 	jobs := []Job{
-		{Chapter: komiku.Chapter{RawID: "1", Display: "1", Number: 1, URL: server.URL + "/chapter-1/"}, Flat: true},
-		{Chapter: komiku.Chapter{RawID: "2", Display: "2", Number: 2, URL: server.URL + "/chapter-2/"}, Flat: true},
+		{Chapter: kiryuu.Chapter{RawID: "1", Display: "1", Number: 1, URL: server.URL + "/?chapter=chapter-1"}, Flat: true},
+		{Chapter: kiryuu.Chapter{RawID: "2", Display: "2", Number: 2, URL: server.URL + "/?chapter=chapter-2"}, Flat: true},
 	}
 	batch := (&Engine{Client: client, Store: seriesStore, Workers: 2}).Start(context.Background(), jobs)
 	var events []Event
@@ -70,8 +72,9 @@ func TestEnginePauseStopsNewRequestsAndResumeKeepsPacing(t *testing.T) {
 	var server *httptest.Server
 	server = httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch r.URL.Path {
-		case "/chapter/":
-			fmt.Fprintf(w, `<img class="klazy" src="%s/1.jpg"><img class="klazy" src="%s/2.jpg"><img class="klazy" src="%s/3.jpg">`, server.URL, server.URL, server.URL)
+		case "/wp-json/kiru/v1/chapter":
+			fmt.Fprint(w, kiryuuChapterObjectJSON("series", "101", "1", server.URL,
+				fmt.Sprintf(`<img src="%s/1.jpg"><img src="%s/2.jpg"><img src="%s/3.jpg">`, server.URL, server.URL, server.URL)))
 		case "/1.jpg", "/2.jpg", "/3.jpg":
 			mu.Lock()
 			imageHits = append(imageHits, time.Now())
@@ -91,8 +94,9 @@ func TestEnginePauseStopsNewRequestsAndResumeKeepsPacing(t *testing.T) {
 	}))
 	defer server.Close()
 	seriesStore, _ := store.Open(t.TempDir(), "series")
-	client := komiku.NewClient(server.Client(), 40*time.Millisecond)
-	job := Job{Chapter: komiku.Chapter{RawID: "1", Display: "1", Number: 1, URL: server.URL + "/chapter/"}, Flat: true}
+	client := kiryuu.NewClient(server.Client(), 40*time.Millisecond)
+	client.BaseURL = server.URL
+	job := Job{Chapter: kiryuu.Chapter{RawID: "1", Display: "1", Number: 1, URL: server.URL + "/?chapter=chapter"}, Flat: true}
 	batch := (&Engine{Client: client, Store: seriesStore, Workers: 1}).Start(context.Background(), []Job{job})
 	drained := make(chan struct{})
 	go func() {
@@ -131,13 +135,12 @@ func TestEngineCancelKeepsDoneAndRecordsActivePart(t *testing.T) {
 	var server *httptest.Server
 	server = httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch r.URL.Path {
-		case "/chapter-1/":
-			fmt.Fprintf(w, `<img class="klazy" src="%s/done.jpg">`, server.URL)
-		case "/chapter-2/":
-			fmt.Fprintf(w, `<img class="klazy" src="%s/active.jpg">`, server.URL)
-		case "/done.jpg":
+		case "/wp-json/kiru/v1/chapter":
+			slug := r.URL.Query().Get("slug")
+			fmt.Fprint(w, kiryuuChapterObjectJSON("series", "101", "1", server.URL, fmt.Sprintf(`<img src="%s/%s.jpg">`, server.URL, slug)))
+		case "/chapter-1.jpg":
 			_, _ = w.Write(append([]byte{0xff, 0xd8}, []byte("done")...))
-		case "/active.jpg":
+		case "/chapter-2.jpg":
 			close(activeStarted)
 			<-r.Context().Done()
 		default:
@@ -147,10 +150,11 @@ func TestEngineCancelKeepsDoneAndRecordsActivePart(t *testing.T) {
 	defer server.Close()
 	root := t.TempDir()
 	seriesStore, _ := store.Open(root, "series")
-	client := komiku.NewClient(server.Client(), 0)
+	client := kiryuu.NewClient(server.Client(), 0)
+	client.BaseURL = server.URL
 	jobs := []Job{
-		{Chapter: komiku.Chapter{RawID: "1", Display: "1", Number: 1, URL: server.URL + "/chapter-1/"}, Flat: true},
-		{Chapter: komiku.Chapter{RawID: "2", Display: "2", Number: 2, URL: server.URL + "/chapter-2/"}, Flat: true},
+		{Chapter: kiryuu.Chapter{RawID: "1", Display: "1", Number: 1, URL: server.URL + "/?chapter=chapter-1"}, Flat: true},
+		{Chapter: kiryuu.Chapter{RawID: "2", Display: "2", Number: 2, URL: server.URL + "/?chapter=chapter-2"}, Flat: true},
 	}
 	batch := (&Engine{Client: client, Store: seriesStore, Workers: 2}).Start(context.Background(), jobs)
 	doneFinished := false
@@ -190,10 +194,12 @@ func TestBatchControlAndCompletionDoNotDependOnImmediateEventConsumption(t *test
 	var server *httptest.Server
 	server = httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch r.URL.Path {
-		case "/chapter/":
+		case "/wp-json/kiru/v1/chapter":
+			content := ""
 			for page := 1; page <= 80; page++ {
-				fmt.Fprintf(w, `<img class="klazy" src="%s/%03d.jpg">`, server.URL, page)
+				content += fmt.Sprintf(`<img src="%s/%03d.jpg">`, server.URL, page)
 			}
+			fmt.Fprint(w, kiryuuChapterObjectJSON("series", "101", "1", server.URL, content))
 		default:
 			imageHits.Add(1)
 			_, _ = w.Write(append([]byte{0xff, 0xd8}, []byte("image")...))
@@ -201,8 +207,9 @@ func TestBatchControlAndCompletionDoNotDependOnImmediateEventConsumption(t *test
 	}))
 	defer server.Close()
 	seriesStore, _ := store.Open(t.TempDir(), "series")
-	client := komiku.NewClient(server.Client(), 0)
-	job := Job{Chapter: komiku.Chapter{RawID: "1", Display: "1", Number: 1, URL: server.URL + "/chapter/"}, Flat: true}
+	client := kiryuu.NewClient(server.Client(), 0)
+	client.BaseURL = server.URL
+	job := Job{Chapter: kiryuu.Chapter{RawID: "1", Display: "1", Number: 1, URL: server.URL + "/?chapter=chapter"}, Flat: true}
 	batch := (&Engine{Client: client, Store: seriesStore, Workers: 1}).Start(context.Background(), []Job{job})
 
 	deadline := time.Now().Add(2 * time.Second)

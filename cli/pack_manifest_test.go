@@ -15,19 +15,19 @@ import (
 	"testing"
 	"time"
 
-	"github.com/bangadam/komiku-cli/komiku"
+	"github.com/bangadam/komiku-cli/kiryuu"
 	packer "github.com/bangadam/komiku-cli/pack"
 )
 
 func TestResolveCompleteVolumeSelectionIsStrictAndAtomic(t *testing.T) {
-	chapters := []komiku.Chapter{
+	chapters := []kiryuu.Chapter{
 		{RawID: "1", Display: "1", Number: 1, URL: "one"},
 		{RawID: "2", Display: "2", Number: 2, URL: "two"},
 		{RawID: "3", Display: "3", Number: 3, URL: "three"},
 		{RawID: "4", Display: "4", Number: 4, URL: "four"},
 		{RawID: "4.5", Display: "4.5", Number: 4.5, URL: "extra"},
 	}
-	rows := []komiku.Volume{{Volume: 1, Start: 1, End: 2}, {Volume: 2, Start: 3, End: 4}}
+	rows := []kiryuu.Volume{{Volume: 1, Start: 1, End: 2}, {Volume: 2, Start: 3, End: 4}}
 
 	resolved, err := ResolveCompleteVolumeSelection(chapters, map[string]bool{"one": true, "two": true, "three": true, "four": true}, rows)
 	if err != nil {
@@ -39,16 +39,16 @@ func TestResolveCompleteVolumeSelectionIsStrictAndAtomic(t *testing.T) {
 
 	tests := []struct {
 		name     string
-		chapters []komiku.Chapter
+		chapters []kiryuu.Chapter
 		selected map[string]bool
-		rows     []komiku.Volume
+		rows     []kiryuu.Volume
 		want     string
 	}{
 		{"partial", chapters, map[string]bool{"one": true}, rows, "requires selected chapter 2"},
 		{"extra", chapters, map[string]bool{"one": true, "two": true, "extra": true}, rows, "extra or non-integer"},
 		{"missing discovered", chapters[:1], map[string]bool{"one": true}, rows[:1], "was not discovered"},
-		{"ambiguous", append(append([]komiku.Chapter(nil), chapters[:2]...), komiku.Chapter{RawID: "02", Display: "2", Number: 2, URL: "two-alt"}), map[string]bool{"one": true, "two": true}, rows[:1], "ambiguous discovered identities"},
-		{"overlap", chapters, map[string]bool{"one": true, "two": true}, []komiku.Volume{{Volume: 1, Start: 1, End: 2}, {Volume: 2, Start: 2, End: 3}}, "overlap"},
+		{"ambiguous", append(append([]kiryuu.Chapter(nil), chapters[:2]...), kiryuu.Chapter{RawID: "02", Display: "2", Number: 2, URL: "two-alt"}), map[string]bool{"one": true, "two": true}, rows[:1], "ambiguous discovered identities"},
+		{"overlap", chapters, map[string]bool{"one": true, "two": true}, []kiryuu.Volume{{Volume: 1, Start: 1, End: 2}, {Volume: 2, Start: 2, End: 3}}, "overlap"},
 	}
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
@@ -64,13 +64,13 @@ func TestResolveCompleteVolumeSelectionIsStrictAndAtomic(t *testing.T) {
 }
 
 func TestResolveCompleteVolumeSelectionIgnoresAmbiguityOutsideChosenRows(t *testing.T) {
-	chapters := []komiku.Chapter{
+	chapters := []kiryuu.Chapter{
 		{RawID: "1", Display: "1", Number: 1, URL: "one"},
 		{RawID: "2", Display: "2", Number: 2, URL: "two"},
 		{RawID: "20-a", Display: "20", Number: 20, URL: "twenty-a"},
 		{RawID: "20-b", Display: "20", Number: 20, URL: "twenty-b"},
 	}
-	rows := []komiku.Volume{{Volume: 1, Start: 1, End: 2}, {Volume: 20, Start: 20, End: 20}}
+	rows := []kiryuu.Volume{{Volume: 1, Start: 1, End: 2}, {Volume: 20, Start: 20, End: 20}}
 	resolved, err := ResolveCompleteVolumeSelection(chapters, map[string]bool{"one": true, "two": true}, rows)
 	if err != nil {
 		t.Fatal(err)
@@ -82,8 +82,8 @@ func TestResolveCompleteVolumeSelectionIgnoresAmbiguityOutsideChosenRows(t *test
 
 func TestRecordPackManifestIgnoresDoneFractionalExtras(t *testing.T) {
 	seriesDir := t.TempDir()
-	mapping := []komiku.Volume{{Volume: 1, Start: 1, End: 2}}
-	chapters := []komiku.Chapter{
+	mapping := []kiryuu.Volume{{Volume: 1, Start: 1, End: 2}}
+	chapters := []kiryuu.Chapter{
 		{RawID: "1", Display: "1", Number: 1, URL: "one"},
 		{RawID: "2", Display: "2", Number: 2, URL: "two"},
 		{RawID: "2.5", Display: "2.5", Number: 2.5, URL: "extra"},
@@ -122,7 +122,7 @@ func TestPackManifestIsAtomicDeterministicRelocatableAndOffline(t *testing.T) {
 	if err := os.MkdirAll(seriesDir, 0o755); err != nil {
 		t.Fatal(err)
 	}
-	chapters := []komiku.Chapter{
+	chapters := []kiryuu.Chapter{
 		{RawID: "1", Display: "1", Number: 1, URL: "one"},
 		{RawID: "2", Display: "2", Number: 2, URL: "two"},
 	}
@@ -134,15 +134,15 @@ func TestPackManifestIsAtomicDeterministicRelocatableAndOffline(t *testing.T) {
 		jobs = append(jobs, Job{Chapter: chapter, Volume: 1})
 		results = append(results, Result{Chapter: chapter, Status: Done, Success: 1, Total: 1, SourceDir: dir})
 	}
-	mappings := []komiku.Volume{{Volume: 1, Start: 1, End: 2}}
-	if err := RecordPackManifest(seriesDir, "series", "https://komiku.org/manga/series/", "wikipedia-display", mappings, jobs, results); err != nil {
+	mappings := []kiryuu.Volume{{Volume: 1, Start: 1, End: 2}}
+	if err := RecordPackManifest(seriesDir, "series", "https://v7.kiryuu.to/manga/series/", "wikipedia-display", mappings, jobs, results); err != nil {
 		t.Fatal(err)
 	}
 	first, err := os.ReadFile(PackManifestPath(seriesDir))
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := RecordPackManifest(seriesDir, "series", "https://komiku.org/manga/series/", "wikipedia-display", mappings, jobs, results); err != nil {
+	if err := RecordPackManifest(seriesDir, "series", "https://v7.kiryuu.to/manga/series/", "wikipedia-display", mappings, jobs, results); err != nil {
 		t.Fatal(err)
 	}
 	second, err := os.ReadFile(PackManifestPath(seriesDir))
@@ -189,10 +189,10 @@ func TestPackManifestIsAtomicDeterministicRelocatableAndOffline(t *testing.T) {
 func TestPackManifestRejectsConflictTraversalSymlinksAndStalePages(t *testing.T) {
 	t.Run("conflict", func(t *testing.T) {
 		seriesDir := t.TempDir()
-		chapter := komiku.Chapter{RawID: "1", Display: "1", Number: 1, URL: "one"}
+		chapter := kiryuu.Chapter{RawID: "1", Display: "1", Number: 1, URL: "one"}
 		dir := filepath.Join(seriesDir, "vol-01", "chapter-001")
 		writeManifestTestImage(t, dir, "001.jpg")
-		mapping := []komiku.Volume{{Volume: 1, Start: 1, End: 1}}
+		mapping := []kiryuu.Volume{{Volume: 1, Start: 1, End: 1}}
 		job := []Job{{Chapter: chapter, Volume: 1}}
 		result := []Result{{Chapter: chapter, Status: Done, Success: 1, Total: 1, SourceDir: dir}}
 		if err := RecordPackManifest(seriesDir, "series", "", "wikipedia-display", mapping, job, result); err != nil {
@@ -227,7 +227,7 @@ func TestPackManifestRejectsConflictTraversalSymlinksAndStalePages(t *testing.T)
 	})
 	t.Run("symlink and stale pages", func(t *testing.T) {
 		seriesDir := t.TempDir()
-		chapter := komiku.Chapter{RawID: "1", Display: "1", Number: 1, URL: "one"}
+		chapter := kiryuu.Chapter{RawID: "1", Display: "1", Number: 1, URL: "one"}
 		dir := filepath.Join(seriesDir, "vol-01", "chapter-001")
 		if err := os.MkdirAll(dir, 0o755); err != nil {
 			t.Fatal(err)
@@ -239,7 +239,7 @@ func TestPackManifestRejectsConflictTraversalSymlinksAndStalePages(t *testing.T)
 		if err := os.Symlink(outside, filepath.Join(dir, "001.jpg")); err != nil {
 			t.Fatal(err)
 		}
-		mapping := []komiku.Volume{{Volume: 1, Start: 1, End: 1}}
+		mapping := []kiryuu.Volume{{Volume: 1, Start: 1, End: 1}}
 		job := []Job{{Chapter: chapter, Volume: 1}}
 		result := []Result{{Chapter: chapter, Status: Done, Success: 1, Total: 1, SourceDir: dir}}
 		if err := RecordPackManifest(seriesDir, "series", "", "wikipedia-display", mapping, job, result); err == nil || !strings.Contains(err.Error(), "symlink") {
@@ -267,13 +267,13 @@ func TestPackManifestConcurrentMergeDoesNotLoseVolumes(t *testing.T) {
 	errs := make(chan error, 2)
 	for volume := 1; volume <= 2; volume++ {
 		volume := volume
-		chapter := komiku.Chapter{RawID: string(rune('0' + volume)), Display: string(rune('0' + volume)), Number: float64(volume), URL: string(rune('a' + volume))}
+		chapter := kiryuu.Chapter{RawID: string(rune('0' + volume)), Display: string(rune('0' + volume)), Number: float64(volume), URL: string(rune('a' + volume))}
 		dir := filepath.Join(seriesDir, "vol-0"+chapter.Display, "chapter-00"+chapter.Display)
 		writeManifestTestImage(t, dir, "001.jpg")
 		group.Add(1)
 		go func() {
 			defer group.Done()
-			errs <- RecordPackManifest(seriesDir, "series", "", "wikipedia-display", []komiku.Volume{{Volume: volume, Start: volume, End: volume}}, []Job{{Chapter: chapter, Volume: volume}}, []Result{{Chapter: chapter, Status: Done, Success: 1, Total: 1, SourceDir: dir}})
+			errs <- RecordPackManifest(seriesDir, "series", "", "wikipedia-display", []kiryuu.Volume{{Volume: volume, Start: volume, End: volume}}, []Job{{Chapter: chapter, Volume: volume}}, []Result{{Chapter: chapter, Status: Done, Success: 1, Total: 1, SourceDir: dir}})
 		}()
 	}
 	group.Wait()
@@ -301,8 +301,8 @@ func TestPackManifestRejectsSymlinkLockFile(t *testing.T) {
 	if err := os.Symlink(target, PackManifestPath(seriesDir)+".lock"); err != nil {
 		t.Fatal(err)
 	}
-	chapter := komiku.Chapter{RawID: "1", Display: "1", Number: 1, URL: "one"}
-	if err := RecordPackManifest(seriesDir, "series", "", "wikipedia-display", []komiku.Volume{{Volume: 1, Start: 1, End: 1}}, []Job{{Chapter: chapter, Volume: 1}}, nil); err == nil || !strings.Contains(err.Error(), "non-symlink") {
+	chapter := kiryuu.Chapter{RawID: "1", Display: "1", Number: 1, URL: "one"}
+	if err := RecordPackManifest(seriesDir, "series", "", "wikipedia-display", []kiryuu.Volume{{Volume: 1, Start: 1, End: 1}}, []Job{{Chapter: chapter, Volume: 1}}, nil); err == nil || !strings.Contains(err.Error(), "non-symlink") {
 		t.Fatalf("lock symlink err=%v", err)
 	}
 }
@@ -355,10 +355,10 @@ func TestPackManifestReclaimsUnlockedLockFile(t *testing.T) {
 	if err := os.WriteFile(PackManifestPath(seriesDir)+".lock", []byte("stale crash artifact\n"), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	chapter := komiku.Chapter{RawID: "1", Display: "1", Number: 1, URL: "one"}
+	chapter := kiryuu.Chapter{RawID: "1", Display: "1", Number: 1, URL: "one"}
 	dir := filepath.Join(seriesDir, "chapter-001")
 	writeManifestTestImage(t, dir, "001.jpg")
-	if err := RecordPackManifest(seriesDir, "series", "", "wikipedia-display", []komiku.Volume{{Volume: 1, Start: 1, End: 1}}, []Job{{Chapter: chapter, Volume: 1}}, []Result{{Chapter: chapter, Status: Done, Success: 1, Total: 1, SourceDir: dir}}); err != nil {
+	if err := RecordPackManifest(seriesDir, "series", "", "wikipedia-display", []kiryuu.Volume{{Volume: 1, Start: 1, End: 1}}, []Job{{Chapter: chapter, Volume: 1}}, []Result{{Chapter: chapter, Status: Done, Success: 1, Total: 1, SourceDir: dir}}); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := LoadPackManifest(seriesDir); err != nil {
@@ -427,8 +427,8 @@ func TestRecoveredManifestCommitRemovesPublishedManifestWhenDirectorySyncFails(t
 	root := t.TempDir()
 	source := filepath.Join(root, "chapter-001")
 	writeManifestTestImage(t, source, "001.jpg")
-	transaction, err := prepareRecoveredPackManifest(root, "series", []komiku.Volume{{Volume: 1, Start: 1, End: 1}}, []PackChapterSource{{
-		Chapter: komiku.Chapter{Display: "1", Number: 1}, Volume: 1, Dir: source, ExpectedPages: 1, Complete: true,
+	transaction, err := prepareRecoveredPackManifest(root, "series", []kiryuu.Volume{{Volume: 1, Start: 1, End: 1}}, []PackChapterSource{{
+		Chapter: kiryuu.Chapter{Display: "1", Number: 1}, Volume: 1, Dir: source, ExpectedPages: 1, Complete: true,
 	}})
 	if err != nil {
 		t.Fatal(err)
@@ -460,8 +460,8 @@ func TestRecoveredManifestCommitReportsPublishedManifestWhenRollbackRemovalFails
 	root := t.TempDir()
 	source := filepath.Join(root, "chapter-001")
 	writeManifestTestImage(t, source, "001.jpg")
-	transaction, err := prepareRecoveredPackManifest(root, "series", []komiku.Volume{{Volume: 1, Start: 1, End: 1}}, []PackChapterSource{{
-		Chapter: komiku.Chapter{Display: "1", Number: 1}, Volume: 1, Dir: source, ExpectedPages: 1, Complete: true,
+	transaction, err := prepareRecoveredPackManifest(root, "series", []kiryuu.Volume{{Volume: 1, Start: 1, End: 1}}, []PackChapterSource{{
+		Chapter: kiryuu.Chapter{Display: "1", Number: 1}, Volume: 1, Dir: source, ExpectedPages: 1, Complete: true,
 	}})
 	if err != nil {
 		t.Fatal(err)
@@ -484,8 +484,8 @@ func TestRecoveredManifestUsesLocalIdentityAndRootConfinedSources(t *testing.T) 
 	root := t.TempDir()
 	source := filepath.Join(root, "chapter-001")
 	writeManifestTestImage(t, source, "001.jpg")
-	mappings := []komiku.Volume{{Volume: 1, Start: 1, End: 1}}
-	sources := []PackChapterSource{{Chapter: komiku.Chapter{Display: "1", Number: 1}, Volume: 1, Dir: source, ExpectedPages: 1, Complete: true}}
+	mappings := []kiryuu.Volume{{Volume: 1, Start: 1, End: 1}}
+	sources := []PackChapterSource{{Chapter: kiryuu.Chapter{Display: "1", Number: 1}, Volume: 1, Dir: source, ExpectedPages: 1, Complete: true}}
 	if err := RecordRecoveredPackManifest(root, "series", mappings, sources); err != nil {
 		t.Fatal(err)
 	}
@@ -518,7 +518,7 @@ func TestManifestPackRequiresExplicitScopeWhenDeclaredVolumeIsIncomplete(t *test
 	root := t.TempDir()
 	source := filepath.Join(root, "chapter-001")
 	writeManifestTestImage(t, source, "001.jpg")
-	if err := RecordRecoveredPackManifest(root, "series", []komiku.Volume{{Volume: 1, Start: 1, End: 1}}, []PackChapterSource{{Chapter: komiku.Chapter{Display: "1", Number: 1}, Volume: 1, Dir: source, ExpectedPages: 1, Complete: true}}); err != nil {
+	if err := RecordRecoveredPackManifest(root, "series", []kiryuu.Volume{{Volume: 1, Start: 1, End: 1}}, []PackChapterSource{{Chapter: kiryuu.Chapter{Display: "1", Number: 1}, Volume: 1, Dir: source, ExpectedPages: 1, Complete: true}}); err != nil {
 		t.Fatal(err)
 	}
 	manifest, err := LoadPackManifest(root)
@@ -543,13 +543,13 @@ func TestManifestPackRequiresExplicitScopeWhenDeclaredVolumeIsIncomplete(t *test
 }
 
 func TestStrictVolumeIndexRejectsHugeOrExcessCoverage(t *testing.T) {
-	if _, _, err := strictVolumeChapterIndex([]komiku.Volume{{Volume: 1, Start: 1, End: int(^uint(0) >> 1)}}); err == nil {
+	if _, _, err := strictVolumeChapterIndex([]kiryuu.Volume{{Volume: 1, Start: 1, End: int(^uint(0) >> 1)}}); err == nil {
 		t.Fatal("max-int range unexpectedly accepted")
 	}
-	rows := make([]komiku.Volume, 0, 2)
+	rows := make([]kiryuu.Volume, 0, 2)
 	rows = append(rows,
-		komiku.Volume{Volume: 1, Start: 1, End: 6000},
-		komiku.Volume{Volume: 2, Start: 6001, End: 11000},
+		kiryuu.Volume{Volume: 1, Start: 1, End: 6000},
+		kiryuu.Volume{Volume: 2, Start: 6001, End: 11000},
 	)
 	if _, _, err := strictVolumeChapterIndex(rows); err == nil || !strings.Contains(err.Error(), "covers more") {
 		t.Fatalf("coverage limit err=%v", err)

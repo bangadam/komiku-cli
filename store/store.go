@@ -12,7 +12,7 @@ import (
 	"strings"
 	"sync"
 
-	"github.com/bangadam/komiku-cli/komiku"
+	"github.com/bangadam/komiku-cli/kiryuu"
 )
 
 const (
@@ -307,7 +307,7 @@ func validImageFile(filename string) bool {
 	if err != nil && err != io.ErrUnexpectedEOF {
 		return false
 	}
-	_, valid := komiku.DetectImage(header[:n])
+	_, valid := kiryuu.DetectImage(header[:n])
 	return valid
 }
 

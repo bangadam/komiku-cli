@@ -117,7 +117,7 @@ func TestDownloadLatestSelector(t *testing.T) {
 	defer server.Close()
 	root := t.TempDir()
 	configPath := filepath.Join(root, "missing-config.json")
-	dependencies := Dependencies{HTTP: server.Client(), ConfigPath: configPath, Now: func() time.Time { return time.Unix(3, 0) }}
+	dependencies := Dependencies{HTTP: server.Client(), BaseURL: server.URL, ConfigPath: configPath, Now: func() time.Time { return time.Unix(3, 0) }}
 
 	var stdout, stderr bytes.Buffer
 	code := Main(context.Background(), []string{"dl", server.URL + "/manga/fixture/", "--ch", "latest:1", "--no-tui", "--json", "--out", root, "--delay", "0s"}, &stdout, &stderr, dependencies)

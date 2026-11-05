@@ -11,7 +11,7 @@ import (
 	"github.com/charmbracelet/lipgloss"
 
 	"github.com/bangadam/komiku-cli/cli"
-	"github.com/bangadam/komiku-cli/komiku"
+	"github.com/bangadam/komiku-cli/kiryuu"
 	packer "github.com/bangadam/komiku-cli/pack"
 )
 
@@ -86,14 +86,14 @@ type backend interface {
 	DownloadedSeries(string) ([]string, error)
 	PackNeedsRecovery(string) (bool, error)
 	PackDownloaded(context.Context, string, bool, packer.Preset) (string, error)
-	Search(context.Context, string) ([]komiku.Series, error)
-	Discover(context.Context, string) ([]komiku.Chapter, error)
-	LoadVolumes(context.Context, string, []komiku.Chapter) ([]komiku.Volume, error)
-	LoadWikipediaVolumes(context.Context, string) ([]komiku.Volume, error)
-	SaveManualVolumes(string, []komiku.Volume, int) error
+	Search(context.Context, string) ([]kiryuu.Series, error)
+	Discover(context.Context, string) ([]kiryuu.Chapter, error)
+	LoadVolumes(context.Context, string, []kiryuu.Chapter) ([]kiryuu.Volume, error)
+	LoadWikipediaVolumes(context.Context, string) ([]kiryuu.Volume, error)
+	SaveManualVolumes(string, []kiryuu.Volume, int) error
 	Start(context.Context, string, []cli.Job) (batchRun, error)
-	RecordPackManifest(string, string, []komiku.Volume, []cli.Job, []cli.Result) error
-	PreparePack(string, packer.Preset, []komiku.Volume, []cli.Job, []cli.Result) cli.PackPlan
+	RecordPackManifest(string, string, []kiryuu.Volume, []cli.Job, []cli.Result) error
+	PreparePack(string, packer.Preset, []kiryuu.Volume, []cli.Job, []cli.Result) cli.PackPlan
 	Pack(context.Context, cli.PackPlan) ([]cli.PackOutcome, error)
 }
 
@@ -143,16 +143,16 @@ type model struct {
 	message               string
 	opCancel              context.CancelFunc
 	operationID           uint64
-	searchResults         []komiku.Series
+	searchResults         []kiryuu.Series
 	searchCursor          int
 	seriesURL             string
-	chapters              []komiku.Chapter
+	chapters              []kiryuu.Chapter
 	chapterCursor         int
 	filtering             bool
 	selected              map[string]bool
 	flat                  bool
 	assignments           map[string]int
-	mappings              []komiku.Volume
+	mappings              []kiryuu.Volume
 	explicitFlat          bool
 	mappingProvenance     string
 	packUnavailableReason string
@@ -161,7 +161,7 @@ type model struct {
 	groupLoaded           bool
 	groupEmpty            bool
 	groupErr              error
-	groupMappings         []komiku.Volume
+	groupMappings         []kiryuu.Volume
 	groupFocus            groupFocus
 
 	rangeMode    rangeMode
@@ -171,7 +171,7 @@ type model struct {
 	jobs             []cli.Job
 	summary          cli.Summary
 	completed        int
-	latest           komiku.Chapter
+	latest           kiryuu.Chapter
 	latestPage       int
 	latestPages      int
 	bytes            int64

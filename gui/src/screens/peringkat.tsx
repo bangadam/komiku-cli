@@ -98,7 +98,7 @@ export function RankingScreen({
   }, [rows, comparisonRanks])
 
   // Shares are computed over the titles whose type is actually known, and the
-  // card states that coverage. komiku.org's ranking page does not carry a type,
+  // card states that coverage. Kiryuu's ranking response does not carry a type,
   // so the rest comes from the analytics feed matched by slug.
   const { typeMix, typedCount } = useMemo(() => {
     const counts = new Map<string, number>()
@@ -143,7 +143,7 @@ export function RankingScreen({
   return (
     <div className="flex h-full flex-col overflow-hidden">
       <DiscoveryBar icon={Trophy} label="Rankings">
-        <BarMeta icon={Trophy}>komiku.org/p/ranking</BarMeta>
+        <BarMeta icon={Trophy}>v7.kiryuu.to · all-time</BarMeta>
         <span className="mx-1 h-4 w-px bg-border" />
         <RefreshButton busy={ranking.loading} onClick={ranking.reload} />
       </DiscoveryBar>
@@ -152,7 +152,7 @@ export function RankingScreen({
         <div className="flex items-start gap-4">
           <div className="flex min-w-0 flex-col gap-1.5">
             <h1 className="text-[30px] font-semibold leading-[1.1] tracking-[-0.02em]">
-              Komiku Rankings
+              Kiryuu Rankings
             </h1>
             <p className="text-[13px] text-muted-foreground">
               {periodLabel} · {formatCount(rows.length)} titles on this page
@@ -349,8 +349,9 @@ export function RankingScreen({
 
             <div className="rounded-[7px] bg-muted p-2.5">
               <p className="text-[10px] leading-relaxed text-dim">
-                Rankings come straight from komiku.org and are not saved to
-                your library. Click a title to open the series.
+                Rankings come straight from Kiryuu's all-time popularity board
+                and are not saved to your library. Kiryuu serves a single
+                all-time board, so period filters show the same ranking.
               </p>
             </div>
           </aside>

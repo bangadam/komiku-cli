@@ -1,5 +1,5 @@
 // volume.go defines the volume mapping model, its on-disk cache format, and the shared chapter-range parsing helpers.
-package komiku
+package kiryuu
 
 import (
 	"encoding/json"
@@ -39,7 +39,18 @@ var (
 	liTagPattern            = regexp.MustCompile(`(?i)<li[\s>/]`)
 	listItemPattern         = regexp.MustCompile(`(?is)<li(?:\s[^>]*)?>(.*?)</li>`)
 	numberedItemPattern     = regexp.MustCompile(`^([0-9]+)[.)]`)
+	volumeTagPattern        = regexp.MustCompile(`(?is)<[^>]+>`)
+	volumeAttrPattern       = regexp.MustCompile(`(?is)([a-zA-Z_:][-a-zA-Z0-9_:.]*)\s*=\s*["']([^"']*)["']`)
 )
+
+// volumeAttrs parses the attributes of one HTML tag.
+func volumeAttrs(tag []byte) map[string]string {
+	attrs := make(map[string]string, 4)
+	for _, match := range volumeAttrPattern.FindAllSubmatch(tag, -1) {
+		attrs[strings.ToLower(string(match[1]))] = string(match[2])
+	}
+	return attrs
+}
 
 func volumeSection(data []byte) []byte {
 	lower := strings.ToLower(string(data))
@@ -152,7 +163,7 @@ func MaxDiscoveredChapter(chapters []Chapter) int {
 // in tankōbon format") from a Volumes section so their items cannot extend
 // the last volume's chapter range.
 func stripNestedSections(section []byte) []byte {
-	tags := tagPattern.FindAllIndex(section, -1)
+	tags := volumeTagPattern.FindAllIndex(section, -1)
 	if len(tags) == 0 {
 		return section
 	}

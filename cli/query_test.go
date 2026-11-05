@@ -15,16 +15,13 @@ import (
 )
 
 func searchFixtureServer(t *testing.T, hits *int) *httptest.Server {
+	t.Helper()
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		*hits++
-		switch {
-		case r.URL.Path == "/" && r.URL.Query().Get("post_type") == "manga":
-			fmt.Fprint(w, `<a href="/manga/frieren/"><h4>Frieren</h4></a><a href="/manga/sakamoto-days/"><h4>Sakamoto Days</h4></a>`)
-		case r.URL.Path == "/" && r.URL.Query().Get("s") != "":
-			fmt.Fprint(w, `<div class="no-results">Nothing found</div>`)
-		default:
-			t.Fatalf("unexpected search path %s", r.URL.String())
+		if r.Method != http.MethodPost || r.URL.Path != "/wp-admin/admin-ajax.php" || r.URL.Query().Get("action") != "advanced_search" {
+			t.Fatalf("unexpected search request %s %s", r.Method, r.URL.String())
 		}
+		fmt.Fprint(w, kiryuuCard("/manga/frieren/", "Frieren", "Ongoing")+kiryuuCard("/manga/sakamoto-days/", "Sakamoto Days", "Ongoing"))
 	}))
 	return server
 }
@@ -71,19 +68,21 @@ func chapterListServer(t *testing.T, imageHits *int) *httptest.Server {
 	server = httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch r.URL.Path {
 		case "/manga/fixture/":
-			fmt.Fprint(w, `<a href="/prefix-chapter-1/"></a><a href="/prefix-chapter-2/"></a><a href="/prefix-chapter-3/"></a>`)
+			fmt.Fprint(w, kiryuuSeriesPage(server.URL, "fixture", []kiryuuChapterFixture{
+				{ID: "101", Number: "1"},
+				{ID: "102", Number: "2"},
+				{ID: "103", Number: "3"},
+			}))
+		case "/wp-json/kiru/v1/chapter":
+			numbers := map[string]string{"101": "1", "102": "2", "103": "3"}
+			id := r.URL.Query().Get("id")
+			fmt.Fprint(w, kiryuuChapterObjectJSON("fixture", id, numbers[id], server.URL, fmt.Sprintf("<img src='%s/page.jpg'>", server.URL)))
+		case "/page.jpg":
+			mu.Lock()
+			*imageHits++
+			mu.Unlock()
+			_, _ = w.Write(append([]byte{0xff, 0xd8}, make([]byte, 11*1024)...))
 		default:
-			if strings.HasPrefix(r.URL.Path, "/prefix-chapter-") {
-				fmt.Fprintf(w, `<img class="klazy" src="%s/page.jpg">`, server.URL)
-				return
-			}
-			if r.URL.Path == "/page.jpg" {
-				mu.Lock()
-				*imageHits++
-				mu.Unlock()
-				_, _ = w.Write(append([]byte{0xff, 0xd8}, make([]byte, 11*1024)...))
-				return
-			}
 			t.Fatalf("unexpected path %s", r.URL.Path)
 		}
 	}))
@@ -96,7 +95,7 @@ func TestDownloadAllThenMissingSkipsDoneChapters(t *testing.T) {
 	defer server.Close()
 	root := t.TempDir()
 	configPath := filepath.Join(root, "missing-config.json")
-	dependencies := Dependencies{HTTP: server.Client(), ConfigPath: configPath, Now: func() time.Time { return time.Unix(3, 0) }}
+	dependencies := Dependencies{HTTP: server.Client(), BaseURL: server.URL, ConfigPath: configPath, Now: func() time.Time { return time.Unix(3, 0) }}
 
 	var stdout, stderr bytes.Buffer
 	code := Main(context.Background(), []string{"dl", server.URL + "/manga/fixture/", "--ch", "all", "--no-tui", "--out", root, "--delay", "0s"}, &stdout, &stderr, dependencies)
@@ -131,7 +130,7 @@ func TestDownloadMissingFillsGapsOnly(t *testing.T) {
 	defer server.Close()
 	root := t.TempDir()
 	configPath := filepath.Join(root, "missing-config.json")
-	dependencies := Dependencies{HTTP: server.Client(), ConfigPath: configPath, Now: func() time.Time { return time.Unix(3, 0) }}
+	dependencies := Dependencies{HTTP: server.Client(), BaseURL: server.URL, ConfigPath: configPath, Now: func() time.Time { return time.Unix(3, 0) }}
 
 	var stdout, stderr bytes.Buffer
 	code := Main(context.Background(), []string{"dl", server.URL + "/manga/fixture/", "--ch", "1-2", "--no-tui", "--out", root, "--delay", "0s"}, &stdout, &stderr, dependencies)
@@ -171,7 +170,7 @@ func TestInfoCommandMarksDoneChapters(t *testing.T) {
 	defer server.Close()
 	root := t.TempDir()
 	configPath := filepath.Join(root, "missing-config.json")
-	dependencies := Dependencies{HTTP: server.Client(), ConfigPath: configPath}
+	dependencies := Dependencies{HTTP: server.Client(), BaseURL: server.URL, ConfigPath: configPath}
 
 	var stdout, stderr bytes.Buffer
 	code := Main(context.Background(), []string{"dl", server.URL + "/manga/fixture/", "--ch", "1", "--no-tui", "--out", root, "--delay", "0s"}, &stdout, &stderr, dependencies)

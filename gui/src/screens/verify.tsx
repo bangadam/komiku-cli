@@ -171,7 +171,7 @@ export function VerifyScreen({
     const toastId = toast.loading(`Re-downloading chapter ${number}…`)
     try {
       const handle = await startDownload(
-        `https://komiku.org/manga/${slug}/`,
+        `https://v7.kiryuu.to/manga/${slug}/`,
         { chapters: number },
         () => {}
       )

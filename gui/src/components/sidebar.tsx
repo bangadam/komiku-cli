@@ -178,7 +178,7 @@ export function Sidebar({
           </span>
         </div>
         <span className="text-[18px] font-semibold tracking-[-0.01em]">
-          komiku
+          kiryuu
         </span>
       </div>
 

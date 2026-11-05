@@ -13,7 +13,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/bangadam/komiku-cli/komiku"
+	"github.com/bangadam/komiku-cli/kiryuu"
 	"github.com/bangadam/komiku-cli/store"
 )
 
@@ -27,7 +27,7 @@ const (
 // sessionFile persists the browser session a solver obtained. cf_clearance is
 // bound to the IP address and User-Agent that solved it, so both are stored.
 type sessionFile struct {
-	komiku.SolvedSession
+	kiryuu.SolvedSession
 	SavedAt time.Time `json:"saved_at"`
 }
 
@@ -41,7 +41,7 @@ func SessionCachePath(configPath string) string {
 }
 
 // LoadSession returns the cached session, or nil when none has been saved.
-func LoadSession(path string) (*komiku.SolvedSession, error) {
+func LoadSession(path string) (*kiryuu.SolvedSession, error) {
 	if path == "" {
 		return nil, nil
 	}
@@ -63,7 +63,7 @@ func LoadSession(path string) (*komiku.SolvedSession, error) {
 	return &session, nil
 }
 
-func saveSession(path string, session komiku.SolvedSession) error {
+func saveSession(path string, session kiryuu.SolvedSession) error {
 	if path == "" {
 		return nil
 	}
@@ -104,8 +104,8 @@ func ResolveSolverPath(configured string) string {
 // NewChallengeSolver builds the SolveFunc the HTTP client calls when it meets
 // a Cloudflare challenge. Successful sessions are cached so later runs reuse
 // the cookie instead of launching a browser again.
-func NewChallengeSolver(solverPath, sessionPath string) func(context.Context, string) (komiku.SolvedSession, error) {
-	return func(ctx context.Context, target string) (komiku.SolvedSession, error) {
+func NewChallengeSolver(solverPath, sessionPath string) func(context.Context, string) (kiryuu.SolvedSession, error) {
+	return func(ctx context.Context, target string) (kiryuu.SolvedSession, error) {
 		runCtx, cancel := context.WithTimeout(ctx, solverTimeout)
 		defer cancel()
 		var cmd *exec.Cmd
@@ -125,24 +125,24 @@ func NewChallengeSolver(solverPath, sessionPath string) func(context.Context, st
 			} else {
 				message = err.Error() + ": " + message
 			}
-			return komiku.SolvedSession{}, fmt.Errorf("run %s: %s", solverPath, message)
+			return kiryuu.SolvedSession{}, fmt.Errorf("run %s: %s", solverPath, message)
 		}
 		var out solverOutput
 		if err := json.Unmarshal(stdout.Bytes(), &out); err != nil {
-			return komiku.SolvedSession{}, fmt.Errorf("parse solver output: %w", err)
+			return kiryuu.SolvedSession{}, fmt.Errorf("parse solver output: %w", err)
 		}
 		cookie := strings.TrimSpace(out.Cookies)
 		if cookie == "" {
-			return komiku.SolvedSession{}, errors.New("solver returned no cookies")
+			return kiryuu.SolvedSession{}, errors.New("solver returned no cookies")
 		}
 		host := ""
 		if parsed, err := url.Parse(target); err == nil {
 			host = parsed.Hostname()
 		}
 		if host == "" {
-			return komiku.SolvedSession{}, fmt.Errorf("cannot determine host for %q", target)
+			return kiryuu.SolvedSession{}, fmt.Errorf("cannot determine host for %q", target)
 		}
-		session := komiku.SolvedSession{UserAgent: strings.TrimSpace(out.UserAgent), Cookie: cookie, Host: host}
+		session := kiryuu.SolvedSession{UserAgent: strings.TrimSpace(out.UserAgent), Cookie: cookie, Host: host}
 		// The session is usable for this run even if the cache write fails;
 		// caching only saves a future solve, so the write must not fail the
 		// fetch that already succeeded.

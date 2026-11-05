@@ -19,10 +19,16 @@ import threading
 import time
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
-from urllib.parse import parse_qs, urlencode, urlparse
+from urllib.parse import parse_qs, urlparse
 
 ANSI = re.compile(r"\x1b(?:\[[0-?]*[ -/]*[@-~]|\][^\x07]*(?:\x07|\x1b\\)|[()][0-2A-Z])")
-CHAPTER = re.compile(r"^/actual-series-chapter-(1|2|3|271-5)/$")
+CHAPTERS = {
+    "1": ("1", "1"),
+    "2": ("2", "2"),
+    "3": ("3", "3"),
+    "271.5": ("271-5", "4"),
+}
+CHAPTER_BY_ID = {chapter_id: (display, directory) for display, (directory, chapter_id) in CHAPTERS.items()}
 IMAGE = re.compile(r"^/images/(1|2|3|271-5)/(\d+)\.jpg$")
 
 AUDIT_LOG = re.compile(r"run-[0-9]{8}T[0-9]{6}\.[0-9]+Z(?:-[0-9]{3})?\.log")
@@ -101,40 +107,11 @@ class FixtureHandler(BaseHTTPRequestHandler):
     def do_GET(self) -> None:
         parsed = urlparse(self.path)
         query = parse_qs(parsed.query)
-        search = query.get("s")
-        if parsed.path == "/" and search:
-            if query.get("post_type") != ["manga"]:
-                self.reply(f'<span hx-get="/fragment/?s={search[0]}" hx-trigger="revealed"></span>'.encode())
-                return
-            deferred_query = urlencode({"post_type": "manga", "s": search[0]}).replace("&", "&amp;")
-            self.reply(
-                f'<div class="daftar"><span hx-get="{self.server.base_url}/fragment/?{deferred_query}" '
-                'hx-trigger="revealed" hx-swap="afterend"></span></div>'.encode()
-            )
-            return
-        if parsed.path == "/fragment/" and search == ["actual"]:
-            self.reply(
-                b'<div class="bge">'
-                b'<div class="bgei"><a href="/manga/actual-series/"><img alt="Actual Fixture Series">'
-                b'<div class="tpe1_inf"><b>Manga</b> Komedi</div></a></div>'
-                b'<div class="kan"><a href="/manga/actual-series/"><h3>Actual Fixture Series</h3></a>'
-                b'<div class="new1"><a href="/actual-series-chapter-271-5/">Chapter 271.5</a></div></div>'
-                b"</div>"
-            )
-            return
-        if parsed.path == "/fragment/" and search == ["empty"]:
-            self.reply(b'<div class="no-results"><p>Tidak ada hasil pencarian yang ditemukan.</p></div>')
-            return
-        if parsed.path == "/fragment/" and search == ["broken"]:
-            self.reply(b'<div class="bge"><a href="/manga/broken/"><img></a></div>')
-            return
         if parsed.path == "/manga/actual-series/":
-            self.reply(
-                b'<a href="/actual-series-chapter-1/">one</a>'
-                b'<a href="/actual-series-chapter-2/">two</a>'
-                b'<a href="/actual-series-chapter-3/">three</a>'
-                b'<a href="/actual-series-chapter-271-5/">extra</a>'
-            )
+            self.reply("".join(
+                f'<a href="/manga/actual-series/chapter-{display}.{chapter_id}/">Chapter {display}</a>'
+                for display, (_, chapter_id) in CHAPTERS.items()
+            ).encode())
             return
         if parsed.path == "/wiki/List_of_Actual_Series_chapters":
             self.reply(
@@ -145,14 +122,25 @@ class FixtureHandler(BaseHTTPRequestHandler):
                 b"</table></section>"
             )
             return
-        chapter_match = CHAPTER.match(parsed.path)
-        if chapter_match:
-            chapter = chapter_match.group(1)
-            images = "".join(
-                f'<img class="klazy" src="{self.server.base_url}/images/{chapter}/{page}.jpg">'
+        if parsed.path == "/wp-json/kiru/v1/chapter":
+            chapter_id = (query.get("id") or [""])[0]
+            entry = CHAPTER_BY_ID.get(chapter_id)
+            if entry is None:
+                self.send_error(404)
+                return
+            display, directory = entry
+            content = "".join(
+                f'<img src="{self.server.base_url}/images/{directory}/{page}.jpg">'
                 for page in range(1, 9)
             )
-            self.reply(images.encode())
+            self.reply(json.dumps({
+                "id": int(chapter_id),
+                "slug": f"chapter-{display}.{chapter_id}",
+                "title": f"Actual Fixture Chapter {display}",
+                "number": display,
+                "url": f"{self.server.base_url}/manga/actual-series/chapter-{display}.{chapter_id}/",
+                "content": content,
+            }).encode(), "application/json")
             return
         image_match = IMAGE.match(parsed.path)
         if image_match:
@@ -161,6 +149,27 @@ class FixtureHandler(BaseHTTPRequestHandler):
             self.server.state.record(chapter, page)
             time.sleep(0.08)
             self.reply(b"\xff\xd8" + bytes([page]) * 12_000, "image/jpeg")
+            return
+        self.send_error(404)
+
+    def do_POST(self) -> None:
+        parsed = urlparse(self.path)
+        query = parse_qs(parsed.query)
+        length = int(self.headers.get("Content-Length") or 0)
+        form = parse_qs(self.rfile.read(length).decode())
+        if parsed.path == "/wp-admin/admin-ajax.php" and query.get("action") == ["advanced_search"]:
+            term = (form.get("query") or [""])[0]
+            if term == "actual":
+                self.reply(
+                    b'<div class="flex rounded-lg overflow-hidden h-46">'
+                    b'<a href="/manga/actual-series/"><img src="/cover.jpg" alt="Actual Fixture Series"></a>'
+                    b'<a href="/manga/actual-series/" class="text-base font-medium">Actual Fixture Series</a>'
+                    b'<span class="bg-accent">Ongoing</span></div>'
+                )
+            elif term == "broken":
+                self.reply(b'<div class="flex rounded-lg overflow-hidden h-46"><a href="/manga/broken/"></a></div>')
+            else:
+                self.reply(b'<div class="no-results"><p>No series found.</p></div>')
             return
         self.send_error(404)
 
@@ -275,11 +284,11 @@ def run_production_no_args(binary: Path, server: FixtureServer, root: Path, repo
     try:
         open_series(term, server.base_url + "/manga/actual-series/", expect_results=False)
         chapters_view = term.text()
-        for identity in ("ch 1  raw:1", "ch 2  raw:2", "ch 3  raw:3", "ch 271.5  raw:271-5"):
+        for identity in ("ch 1  raw:1", "ch 2  raw:2", "ch 3  raw:3", "ch 271.5  raw:4"):
             if identity not in chapters_view:
                 raise AssertionError(f"URL fallback chapter list missing {identity!r}\n{chapters_view[-4000:]}")
         evidence.record("01-no-arg-url-list.png", "01 NO-ARG URL CHAPTER LIST", chapters_view,
-            ["komiku-cli / Chapters", "ch 1  raw:1", "ch 2  raw:2", "ch 3  raw:3", "ch 271.5  raw:271-5"],
+            ["komiku-cli / Chapters", "ch 1  raw:1", "ch 2  raw:2", "ch 3  raw:3", "ch 271.5  raw:4"],
             ["production binary started with no arguments", "loopback /manga/ URL passed strict source policy", "raw extra identity remained visible"])
         term.send("q")
         if term.wait_exit() != 0:
@@ -305,7 +314,7 @@ def run_full_fixture(fixture: Path, server: FixtureServer, root: Path, repo: Pat
         term.send("broken")
         term.wait_for("> broken", since=input_mark)
         term.send("\r")
-        term.wait_for("[ERROR] search results contain series links without usable titles", since=input_mark)
+        term.wait_for("[EMPTY] No series found.", since=input_mark)
         term.send(b"\x15")
         input_mark = term.mark()
         term.send("actual")
@@ -356,7 +365,7 @@ def run_full_fixture(fixture: Path, server: FixtureServer, root: Path, repo: Pat
         term.wait_for("/ 271.5", since=mark)
         mark = term.mark()
         term.send("\r")
-        term.wait_for("raw:271-5", since=mark)
+        term.wait_for("raw:4", since=mark)
         term.send(" ")
         term.wait_for("Selected 1/4", since=mark)
 
@@ -404,8 +413,8 @@ def run_full_fixture(fixture: Path, server: FixtureServer, root: Path, repo: Pat
         term.send("\r")
         term.wait_for("Selected 2 chapters from 1 volume(s).", since=mark)
         evidence.record("02-keyword-range-mapping.png", "02 KEYWORD AGGREGATE VOLUME RANGE AND MAPPING", term.text(),
-            ["[EMPTY] No series found.", "[ERROR] search results contain series links without usable titles", "Actual Fixture Series  actual-series", "Results (1)", "[ ] Volume 01  ch 1-2", "> [x] Volume 01  ch 1-2", "[-] Volume 01  ch 1-2", "[ ] Volume 02  ch 3-3", "Unmapped / extras", "Volume view source: Wikipedia", "Selected 3 discovered chapter(s) in flat layout.", "Selected 2 chapters from 1 volume(s).", "Volume 01: ch 1-2"],
-            ["canonical post_type=manga search followed a validated same-origin HTMX fragment", "true no-results remained EMPTY", "keyword result selected by keyboard", "Wikipedia headers received focus and exposed unchecked/full/partial aggregate states", "aggregate Space changed only the shared chapter selection", "group-off preserved the selected chapter identity", "flat and mapped range paths were observed", "mapped coverage was shown before download"])
+            ["[EMPTY] No series found.", "[EMPTY] No series found.", "Actual Fixture Series  actual-series", "Results (1)", "[ ] Volume 01  ch 1-2", "> [x] Volume 01  ch 1-2", "[-] Volume 01  ch 1-2", "[ ] Volume 02  ch 3-3", "Unmapped / extras", "Volume view source: Wikipedia", "Selected 3 discovered chapter(s) in flat layout.", "Selected 2 chapters from 1 volume(s).", "Volume 01: ch 1-2"],
+            ["advanced_search POST returned a same-origin series card", "true no-results remained EMPTY", "keyword result selected by keyboard", "Wikipedia headers received focus and exposed unchecked/full/partial aggregate states", "aggregate Space changed only the shared chapter selection", "group-off preserved the selected chapter identity", "flat and mapped range paths were observed", "mapped coverage was shown before download"])
 
         mark = term.mark()
         term.send("\r")

@@ -25,9 +25,13 @@ func updateFixtureServer(t *testing.T, imageHits *atomic.Int32) *httptest.Server
 	server = httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch r.URL.Path {
 		case "/manga/fixture/":
-			fmt.Fprint(w, `<a href="/prefix-chapter-1/"></a><a href="/prefix-chapter-2/"></a><a href="/prefix-chapter-3/"></a>`)
-		case "/prefix-chapter-1/", "/prefix-chapter-2/", "/prefix-chapter-3/":
-			fmt.Fprintf(w, `<img class="klazy" src="%s/page.jpg">`, server.URL)
+			fmt.Fprint(w, kiryuuSeriesPage(server.URL, "fixture", []kiryuuChapterFixture{
+				{ID: "101", Number: "1"},
+				{ID: "102", Number: "2"},
+				{ID: "103", Number: "3"},
+			}))
+		case "/wp-json/kiru/v1/chapter":
+			fmt.Fprint(w, kiryuuChapterObjectJSON("fixture", r.URL.Query().Get("id"), "1", server.URL, fmt.Sprintf(`<img src="%s/page.jpg">`, server.URL)))
 		case "/page.jpg":
 			imageHits.Add(1)
 			_, _ = w.Write(append([]byte{0xff, 0xd8}, make([]byte, 11*1024)...))
@@ -325,7 +329,7 @@ func TestUpdateSkipsDirectoriesWithoutDownloadedState(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
-	writeSeriesManifestFixture(t, filepath.Join(root, "metadata-only"), "https://komiku.org/manga/metadata-only/")
+	writeSeriesManifestFixture(t, filepath.Join(root, "metadata-only"), "https://v7.kiryuu.to/manga/metadata-only/")
 	deps := Dependencies{ConfigPath: isolatedCLIConfig(t), HTTP: &http.Client{Transport: roundTripFunc(func(*http.Request) (*http.Response, error) {
 		t.Error("metadata-only directory made an HTTP request")
 		return nil, fmt.Errorf("unexpected HTTP request")

@@ -4,7 +4,7 @@ package cli
 import (
 	"errors"
 	"fmt"
-	"github.com/bangadam/komiku-cli/komiku"
+	"github.com/bangadam/komiku-cli/kiryuu"
 	packer "github.com/bangadam/komiku-cli/pack"
 	"github.com/bangadam/komiku-cli/store"
 	"math"
@@ -49,7 +49,7 @@ func PackManifestPath(seriesDir string) string {
 	return filepath.Join(seriesDir, ".pack.json")
 }
 
-func RecordPackManifest(seriesDir, series, seriesURL, provenance string, mappings []komiku.Volume, jobs []Job, results []Result) error {
+func RecordPackManifest(seriesDir, series, seriesURL, provenance string, mappings []kiryuu.Volume, jobs []Job, results []Result) error {
 	if provenance == "" {
 		return errors.New("pack manifest mapping provenance is empty")
 	}
@@ -173,8 +173,8 @@ func RecordPackManifest(seriesDir, series, seriesURL, provenance string, mapping
 }
 
 // RecordRecoveredPackManifest persists verified Wikipedia mappings against local legacy
-// chapter directories without inventing Komiku URL or raw-ID provenance.
-func RecordRecoveredPackManifest(seriesDir, series string, mappings []komiku.Volume, sources []PackChapterSource) error {
+// chapter directories without inventing Kiryuu URL or raw-ID provenance.
+func RecordRecoveredPackManifest(seriesDir, series string, mappings []kiryuu.Volume, sources []PackChapterSource) error {
 	transaction, err := prepareRecoveredPackManifestWithProvenance(seriesDir, series, "wikipedia-recovery", mappings, sources)
 	if err != nil {
 		return err
@@ -193,11 +193,11 @@ type recoveredManifestTransaction struct {
 	closed            bool
 }
 
-func prepareRecoveredPackManifest(seriesDir, series string, mappings []komiku.Volume, sources []PackChapterSource) (*recoveredManifestTransaction, error) {
+func prepareRecoveredPackManifest(seriesDir, series string, mappings []kiryuu.Volume, sources []PackChapterSource) (*recoveredManifestTransaction, error) {
 	return prepareRecoveredPackManifestWithProvenance(seriesDir, series, "wikipedia-recovery", mappings, sources)
 }
 
-func prepareRecoveredPackManifestWithProvenance(seriesDir, series, provenance string, mappings []komiku.Volume, sources []PackChapterSource) (*recoveredManifestTransaction, error) {
+func prepareRecoveredPackManifestWithProvenance(seriesDir, series, provenance string, mappings []kiryuu.Volume, sources []PackChapterSource) (*recoveredManifestTransaction, error) {
 	root, err := canonicalSeriesRoot(seriesDir)
 	if err != nil {
 		return nil, err
@@ -245,7 +245,7 @@ func prepareRecoveredPackManifestWithProvenance(seriesDir, series, provenance st
 			transaction.Abort()
 			return nil, fmt.Errorf("recovered chapter %s lacks trusted local completion metadata", source.Chapter.Display)
 		}
-		// A chapter already recorded from a Komiku download keeps its original
+		// A chapter already recorded from a Kiryuu download keeps its original
 		// identity; the local source is only added for chapters the manifest
 		// does not know yet.
 		if manifestNumbers[source.Chapter.Number] {
@@ -328,9 +328,9 @@ func PrepareManifestPack(seriesDir string, preset packer.Preset, volumeExpressio
 	if err != nil {
 		return PackPlan{}, err
 	}
-	mappings := make([]komiku.Volume, 0, len(manifest.Mappings))
+	mappings := make([]kiryuu.Volume, 0, len(manifest.Mappings))
 	for _, mapping := range manifest.Mappings {
-		mappings = append(mappings, komiku.Volume{Volume: mapping.Volume, Start: mapping.Start, End: mapping.End})
+		mappings = append(mappings, kiryuu.Volume{Volume: mapping.Volume, Start: mapping.Start, End: mapping.End})
 	}
 	explicit := strings.TrimSpace(volumeExpression) != ""
 	if explicit {
@@ -356,7 +356,7 @@ func PrepareManifestPack(seriesDir string, preset packer.Preset, volumeExpressio
 		if filepath.Clean(cleanRelative) != filepath.Clean(relative) {
 			return PackPlan{}, fmt.Errorf("manifest chapter %s source path is not canonical", chapter.Display)
 		}
-		sources = append(sources, PackChapterSource{Chapter: komiku.Chapter{URL: chapter.URL, RawID: chapter.RawID, Display: chapter.Display, Number: chapter.Number}, Volume: chapter.Volume, Dir: cleanRelative, ExpectedPages: chapter.ExpectedPages, Complete: chapter.Completed && pages == chapter.ExpectedPages})
+		sources = append(sources, PackChapterSource{Chapter: kiryuu.Chapter{URL: chapter.URL, RawID: chapter.RawID, Display: chapter.Display, Number: chapter.Number}, Volume: chapter.Volume, Dir: cleanRelative, ExpectedPages: chapter.ExpectedPages, Complete: chapter.Completed && pages == chapter.ExpectedPages})
 	}
 	plan := preparePackSources(root, root, manifest.Series, preset, mappings, sources)
 	if len(plan.Skipped) > 0 {

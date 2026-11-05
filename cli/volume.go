@@ -6,16 +6,16 @@ import (
 	"strconv"
 	"strings"
 
-	"github.com/bangadam/komiku-cli/komiku"
+	"github.com/bangadam/komiku-cli/kiryuu"
 	"github.com/bangadam/komiku-cli/store"
 )
 
-func ParseManualVolumeMapping(expression string, maxChapter int) ([]komiku.Volume, error) {
+func ParseManualVolumeMapping(expression string, maxChapter int) ([]kiryuu.Volume, error) {
 	expression = strings.TrimSpace(expression)
 	if expression == "" {
 		return nil, fmt.Errorf("manual mapping is empty; use 1:1-7,2:8-15")
 	}
-	volumes := make([]komiku.Volume, 0)
+	volumes := make([]kiryuu.Volume, 0)
 	for _, rawEntry := range strings.Split(expression, ",") {
 		entry := strings.TrimSpace(rawEntry)
 		parts := strings.Split(entry, ":")
@@ -35,19 +35,19 @@ func ParseManualVolumeMapping(expression string, maxChapter int) ([]komiku.Volum
 		if startErr != nil || endErr != nil {
 			return nil, fmt.Errorf("invalid chapter range in %q", entry)
 		}
-		volumes = append(volumes, komiku.Volume{Volume: volume, Start: start, End: end})
+		volumes = append(volumes, kiryuu.Volume{Volume: volume, Start: start, End: end})
 	}
-	if err := komiku.ValidateVolumes(volumes, maxChapter); err != nil {
+	if err := kiryuu.ValidateVolumes(volumes, maxChapter); err != nil {
 		return nil, err
 	}
 	return volumes, nil
 }
 
-func SaveManualVolumeMapping(seriesDir string, volumes []komiku.Volume, maxChapter int) error {
-	if err := komiku.ValidateVolumes(volumes, maxChapter); err != nil {
+func SaveManualVolumeMapping(seriesDir string, volumes []kiryuu.Volume, maxChapter int) error {
+	if err := kiryuu.ValidateVolumes(volumes, maxChapter); err != nil {
 		return err
 	}
-	cache := komiku.VolumeCache{Source: "manual-tui", Volumes: volumes}
+	cache := kiryuu.VolumeCache{Source: "manual-tui", Volumes: volumes}
 	if err := store.WriteJSONAtomic(filepath.Join(seriesDir, ".volumes.json"), cache); err != nil {
 		return fmt.Errorf("write manual volume mapping: %w", err)
 	}

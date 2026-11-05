@@ -9,7 +9,7 @@ import (
 	tea "github.com/charmbracelet/bubbletea"
 
 	"github.com/bangadam/komiku-cli/cli"
-	"github.com/bangadam/komiku-cli/komiku"
+	"github.com/bangadam/komiku-cli/kiryuu"
 )
 
 func (m model) startDownload() (tea.Model, tea.Cmd) {
@@ -130,7 +130,7 @@ func (m *model) applyEngineEvent(event cli.Event) {
 	}
 }
 
-func (m *model) addResultError(chapter komiku.Chapter, message string) {
+func (m *model) addResultError(chapter kiryuu.Chapter, message string) {
 	if message == "" {
 		return
 	}

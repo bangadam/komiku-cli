@@ -1,4 +1,4 @@
-package komiku
+package kiryuu
 
 import (
 	"context"
@@ -9,6 +9,13 @@ import (
 	"strings"
 	"testing"
 )
+
+// volumeTransport stubs HTTP for the volume provider tests.
+type volumeTransport func(*http.Request) (*http.Response, error)
+
+func (f volumeTransport) RoundTrip(request *http.Request) (*http.Response, error) {
+	return f(request)
+}
 
 func TestParseVolumeMappingDerivesEnds(t *testing.T) {
 	var fixture strings.Builder
@@ -189,7 +196,7 @@ func TestParseWikipediaDisplayVolumesRejectsIncompleteRows(t *testing.T) {
 
 func TestFetchWikipediaDisplayVolumesMakesOneWikipediaRequest(t *testing.T) {
 	var requests []string
-	client := NewClient(&http.Client{Transport: roundTripFunc(func(request *http.Request) (*http.Response, error) {
+	client := NewClient(&http.Client{Transport: volumeTransport(func(request *http.Request) (*http.Response, error) {
 		requests = append(requests, request.URL.String())
 		body := `<section aria-labelledby="Volumes"><th scope="row" id="vol1">1</th><li>Days 1: one</li></section>`
 		return &http.Response{StatusCode: http.StatusOK, Status: "200 OK", Header: make(http.Header), Body: io.NopCloser(strings.NewReader(body)), Request: request}, nil
@@ -222,7 +229,7 @@ func TestFetchWikipediaDisplayVolumesDoesNotFallBack(t *testing.T) {
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
 			var requests []string
-			client := NewClient(&http.Client{Transport: roundTripFunc(func(request *http.Request) (*http.Response, error) {
+			client := NewClient(&http.Client{Transport: volumeTransport(func(request *http.Request) (*http.Response, error) {
 				requests = append(requests, request.URL.String())
 				body := test.body
 				if strings.Contains(request.URL.Path, "/w/api.php") {
@@ -258,7 +265,7 @@ func TestFetchWikipediaDisplayVolumesDoesNotFallBack(t *testing.T) {
 func TestFetchWikipediaDisplayVolumesResolvesTitleViaSearch(t *testing.T) {
 	var requests []string
 	chaptersBody := `<section aria-labelledby="Volumes"><th scope="row" id="vol1">1</th><li>Days 1: one</li></section>`
-	client := NewClient(&http.Client{Transport: roundTripFunc(func(request *http.Request) (*http.Response, error) {
+	client := NewClient(&http.Client{Transport: volumeTransport(func(request *http.Request) (*http.Response, error) {
 		requests = append(requests, request.URL.String())
 		if strings.Contains(request.URL.Path, "/w/api.php") {
 			body := `{"query":{"search":[{"title":"List of Noisy Series episodes"},{"title":"List of Noisy Series chapters"}]}}`

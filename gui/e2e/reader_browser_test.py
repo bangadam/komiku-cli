@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Deterministic browser acceptance test for the online reader.
 
-Starts the loopback Komiku fixture (real HTTP pages and images), an isolated
+Starts the loopback Kiryuu fixture (real HTTP pages and images), an isolated
 HOME/library, and the Vite dev server, then drives the reader through every
 mode. Nothing touches the live site, the user's library, or ports it does not
 own.

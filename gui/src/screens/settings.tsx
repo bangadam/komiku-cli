@@ -509,7 +509,7 @@ export function SettingsScreen({
               <div className="flex min-w-0 flex-col gap-0.5">
                 <span className="text-[12px] font-medium">Request delay</span>
                 <span className="text-[10px] text-dim">
-                  Pacing between image requests — raise it if Komiku throttles
+                  Pacing between image requests — raise it if Kiryuu throttles
                 </span>
               </div>
               <input
@@ -717,7 +717,7 @@ export function SettingsScreen({
                 <span className="text-[12px] text-dim">Source</span>
                 <div className="flex-1" />
                 <span className="font-mono text-[11px] text-muted-foreground">
-                  komiku.org
+                  v7.kiryuu.to
                 </span>
               </div>
               <div className="flex items-center">
@@ -749,7 +749,7 @@ export function SettingsScreen({
             </div>
 
             <p className="text-[10px] leading-relaxed text-dim">
-              Not affiliated with Komiku. Download only content you are
+              Not affiliated with Kiryuu. Download only content you are
               authorized to access.
             </p>
           </div>

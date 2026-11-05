@@ -13,7 +13,7 @@ import (
 	"github.com/spf13/cobra"
 	"github.com/spf13/pflag"
 
-	"github.com/bangadam/komiku-cli/komiku"
+	"github.com/bangadam/komiku-cli/kiryuu"
 	"github.com/bangadam/komiku-cli/store"
 )
 
@@ -35,8 +35,8 @@ func loadEffectiveConfig(dependencies Dependencies, overrides Overrides) (Config
 	return ResolveConfig(fileConfig, overrides)
 }
 
-func (d Dependencies) newKomikuClient(imageDelay time.Duration) *komiku.Client {
-	client := komiku.NewClient(d.HTTP, imageDelay)
+func (d Dependencies) newKiryuuClient(imageDelay time.Duration) *kiryuu.Client {
+	client := kiryuu.NewClient(d.HTTP, imageDelay)
 	if d.BaseURL != "" {
 		client.BaseURL = d.BaseURL
 	}
@@ -51,17 +51,17 @@ func (d Dependencies) newKomikuClient(imageDelay time.Duration) *komiku.Client {
 	return client
 }
 
-// NewKomikuClient exposes the solver-wired client to other frontends such as
+// NewKiryuuClient exposes the solver-wired client to other frontends such as
 // the interactive TUI.
-func (d Dependencies) NewKomikuClient(imageDelay time.Duration) *komiku.Client {
-	return d.newKomikuClient(imageDelay)
+func (d Dependencies) NewKiryuuClient(imageDelay time.Duration) *kiryuu.Client {
+	return d.newKiryuuClient(imageDelay)
 }
 
 func NewSearchCommand(dependencies Dependencies) *cobra.Command {
 	var asJSON bool
 	cmd := &cobra.Command{
 		Use:   "search <query>",
-		Short: "Search Komiku titles and print series URLs",
+		Short: "Search Kiryuu titles and print series URLs",
 		Args: func(cmd *cobra.Command, args []string) error {
 			if len(args) != 1 || strings.TrimSpace(args[0]) == "" {
 				return errors.New("search requires exactly one non-empty query")
@@ -77,7 +77,7 @@ func NewSearchCommand(dependencies Dependencies) *cobra.Command {
 }
 
 func runSearch(ctx context.Context, query string, asJSON bool, stdout io.Writer, dependencies Dependencies) error {
-	client := dependencies.newKomikuClient(0)
+	client := dependencies.newKiryuuClient(0)
 	results, err := client.Search(ctx, query)
 	if err != nil {
 		return fmt.Errorf("search: %w", err)
@@ -105,7 +105,7 @@ type SeriesInfo struct {
 	SeriesURL string          `json:"series_url,omitempty"`
 	Chapters  []ChapterInfo   `json:"chapters"`
 	DoneCount int             `json:"done_count"`
-	Volumes   []komiku.Volume `json:"volumes,omitempty"`
+	Volumes   []kiryuu.Volume `json:"volumes,omitempty"`
 	// VolumeError reports why the optional volume mapping is unavailable. The
 	// chapter list is still complete, so callers can fall back to a flat pack.
 	VolumeError string `json:"volume_error,omitempty"`
@@ -131,7 +131,7 @@ func NewInfoCommand(dependencies Dependencies) *cobra.Command {
 }
 
 func runInfo(ctx context.Context, seriesURL string, flags *pflag.FlagSet, stdout io.Writer, dependencies Dependencies) error {
-	parsed, err := komiku.ValidateSeriesURL(seriesURL)
+	parsed, err := kiryuu.ValidateSeriesURL(seriesURL)
 	if err != nil {
 		return err
 	}
@@ -159,7 +159,7 @@ func runInfo(ctx context.Context, seriesURL string, flags *pflag.FlagSet, stdout
 			return err
 		}
 	} else {
-		client := dependencies.newKomikuClient(0)
+		client := dependencies.newKiryuuClient(0)
 		chapters, discoverErr := client.Discover(ctx, seriesURL)
 		if discoverErr != nil {
 			return fmt.Errorf("discover chapters: %w", discoverErr)
@@ -196,7 +196,7 @@ func runInfo(ctx context.Context, seriesURL string, flags *pflag.FlagSet, stdout
 			if storeErr != nil {
 				return storeErr
 			}
-			volumeSource, sourceErr := komiku.ParseVolumeSource(volumeSourceName)
+			volumeSource, sourceErr := kiryuu.ParseVolumeSource(volumeSourceName)
 			if sourceErr != nil {
 				return sourceErr
 			}

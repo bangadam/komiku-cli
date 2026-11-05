@@ -13,7 +13,7 @@ import (
 	"github.com/spf13/cobra"
 	"github.com/spf13/pflag"
 
-	"github.com/bangadam/komiku-cli/komiku"
+	"github.com/bangadam/komiku-cli/kiryuu"
 	"github.com/bangadam/komiku-cli/store"
 )
 
@@ -132,7 +132,7 @@ type updateResult struct {
 // updateOneSeries discovers a series's chapters, identifies those not yet
 // marked done locally, and (unless dryRun) downloads them via the engine.
 func updateOneSeries(ctx context.Context, target localSeriesTarget, config Config, dependencies Dependencies, dryRun bool, workers int) (updateResult, error) {
-	if _, err := komiku.ValidateSeriesURL(target.URL); err != nil {
+	if _, err := kiryuu.ValidateSeriesURL(target.URL); err != nil {
 		return updateResult{}, err
 	}
 	// Read completion state without opening a writable store: checks must not
@@ -145,7 +145,7 @@ func updateOneSeries(ctx context.Context, target localSeriesTarget, config Confi
 	for _, number := range doneNumbers {
 		done[number] = true
 	}
-	client := dependencies.newKomikuClient(config.ImageDelay)
+	client := dependencies.newKiryuuClient(config.ImageDelay)
 	chapters, err := client.Discover(ctx, target.URL)
 	if err != nil {
 		return updateResult{}, fmt.Errorf("discover: %w", err)

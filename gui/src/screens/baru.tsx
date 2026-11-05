@@ -59,7 +59,7 @@ export function NewScreen({
   return (
     <div className="flex h-full flex-col overflow-hidden">
       <DiscoveryBar icon={Sparkles} label="New">
-        <BarMeta icon={Sparkles}>komiku.org/pustaka?orderby=date</BarMeta>
+        <BarMeta icon={Sparkles}>v7.kiryuu.to · newest</BarMeta>
         <span className="mx-1 h-4 w-px bg-border" />
         <RefreshButton busy={feed.loading} onClick={feed.reload} />
       </DiscoveryBar>

@@ -1,6 +1,6 @@
 {
   "$schema": "../node_modules/@tauri-apps/cli/config.schema.json",
-  "productName": "Komiku",
+  "productName": "Kiryuu",
   "version": "0.9.0",
   "identifier": "dev.bangadam.komiku",
   "build": {
@@ -12,7 +12,7 @@
   "app": {
     "windows": [
       {
-        "title": "Komiku",
+        "title": "Kiryuu",
         "width": 1440,
         "height": 900,
         "minWidth": 1120,

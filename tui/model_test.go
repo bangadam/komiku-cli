@@ -12,25 +12,25 @@ import (
 	tea "github.com/charmbracelet/bubbletea"
 
 	"github.com/bangadam/komiku-cli/cli"
-	"github.com/bangadam/komiku-cli/komiku"
+	"github.com/bangadam/komiku-cli/kiryuu"
 	packer "github.com/bangadam/komiku-cli/pack"
 	"github.com/bangadam/komiku-cli/store"
 )
 
 type fakeBackend struct {
-	searchResults         []komiku.Series
-	chapters              []komiku.Chapter
+	searchResults         []kiryuu.Series
+	chapters              []kiryuu.Chapter
 	searchErr             error
 	discoverErr           error
-	volumes               []komiku.Volume
-	wikipediaVolumes      []komiku.Volume
+	volumes               []kiryuu.Volume
+	wikipediaVolumes      []kiryuu.Volume
 	wikipediaVolumesErr   error
 	wikipediaVolumeCalls  int
 	wikipediaVolumeSeries string
 	batch                 *fakeBatch
 	packPlan              cli.PackPlan
 	packStore             *store.SeriesStore
-	preparedMappings      []komiku.Volume
+	preparedMappings      []kiryuu.Volume
 	preparedJobs          []cli.Job
 	recordedProvenance    string
 	recordErr             error
@@ -38,7 +38,7 @@ type fakeBackend struct {
 	packErr               error
 	searchQuery           string
 	discoverURL           string
-	savedVolumes          []komiku.Volume
+	savedVolumes          []kiryuu.Volume
 	saveCalls             int
 	startedJobs           []cli.Job
 	startCalls            int
@@ -60,7 +60,7 @@ type fakeBackend struct {
 	presetErr             error
 }
 
-func (f *fakeBackend) Search(_ context.Context, query string) ([]komiku.Series, error) {
+func (f *fakeBackend) Search(_ context.Context, query string) ([]kiryuu.Series, error) {
 	f.searchQuery = query
 	return f.searchResults, f.searchErr
 }
@@ -87,21 +87,21 @@ func (f *fakeBackend) PackDownloaded(_ context.Context, seriesDir string, recove
 	f.standalonePackRecover = recover
 	return f.standalonePackOutput, f.standalonePackErr
 }
-func (f *fakeBackend) Discover(_ context.Context, seriesURL string) ([]komiku.Chapter, error) {
+func (f *fakeBackend) Discover(_ context.Context, seriesURL string) ([]kiryuu.Chapter, error) {
 	f.discoverURL = seriesURL
 	return f.chapters, f.discoverErr
 }
-func (f *fakeBackend) LoadVolumes(context.Context, string, []komiku.Chapter) ([]komiku.Volume, error) {
+func (f *fakeBackend) LoadVolumes(context.Context, string, []kiryuu.Chapter) ([]kiryuu.Volume, error) {
 	return f.volumes, nil
 }
-func (f *fakeBackend) LoadWikipediaVolumes(_ context.Context, seriesURL string) ([]komiku.Volume, error) {
+func (f *fakeBackend) LoadWikipediaVolumes(_ context.Context, seriesURL string) ([]kiryuu.Volume, error) {
 	f.wikipediaVolumeCalls++
 	f.wikipediaVolumeSeries = seriesURL
 	return f.wikipediaVolumes, f.wikipediaVolumesErr
 }
-func (f *fakeBackend) SaveManualVolumes(_ string, volumes []komiku.Volume, _ int) error {
+func (f *fakeBackend) SaveManualVolumes(_ string, volumes []kiryuu.Volume, _ int) error {
 	f.saveCalls++
-	f.savedVolumes = append([]komiku.Volume(nil), volumes...)
+	f.savedVolumes = append([]kiryuu.Volume(nil), volumes...)
 	return nil
 }
 func (f *fakeBackend) Start(_ context.Context, _ string, jobs []cli.Job) (batchRun, error) {
@@ -112,7 +112,7 @@ func (f *fakeBackend) Start(_ context.Context, _ string, jobs []cli.Job) (batchR
 	}
 	return f.batch, nil
 }
-func (f *fakeBackend) RecordPackManifest(seriesURL, provenance string, mappings []komiku.Volume, jobs []cli.Job, results []cli.Result) error {
+func (f *fakeBackend) RecordPackManifest(seriesURL, provenance string, mappings []kiryuu.Volume, jobs []cli.Job, results []cli.Result) error {
 	f.recordedProvenance = provenance
 	if f.recordErr != nil {
 		return f.recordErr
@@ -122,8 +122,8 @@ func (f *fakeBackend) RecordPackManifest(seriesURL, provenance string, mappings 
 	}
 	return nil
 }
-func (f *fakeBackend) PreparePack(_ string, preset packer.Preset, mappings []komiku.Volume, jobs []cli.Job, results []cli.Result) cli.PackPlan {
-	f.preparedMappings = append([]komiku.Volume(nil), mappings...)
+func (f *fakeBackend) PreparePack(_ string, preset packer.Preset, mappings []kiryuu.Volume, jobs []cli.Job, results []cli.Result) cli.PackPlan {
+	f.preparedMappings = append([]kiryuu.Volume(nil), mappings...)
 	f.preparedJobs = append([]cli.Job(nil), jobs...)
 	if f.packStore != nil {
 		return cli.PreparePack(f.packStore, f.packStore.Series, preset, mappings, jobs, results)
@@ -446,8 +446,8 @@ func TestToCBZEscRescansList(t *testing.T) {
 func TestModelKeywordSearchUsesSelectedResultURL(t *testing.T) {
 	resultURL := "https://fixture.invalid/manga/actual-series/"
 	service := &fakeBackend{
-		searchResults: []komiku.Series{{Title: "Actual Series", Slug: "actual-series", URL: resultURL, Href: "/manga/actual-series/"}},
-		chapters:      []komiku.Chapter{{RawID: "271.5", Display: "271.5", Number: 271.5, URL: resultURL + "chapter-271-5/"}},
+		searchResults: []kiryuu.Series{{Title: "Actual Series", Slug: "actual-series", URL: resultURL, Href: "/manga/actual-series/"}},
+		chapters:      []kiryuu.Chapter{{RawID: "271.5", Display: "271.5", Number: 271.5, URL: resultURL + "chapter-271-5/"}},
 	}
 	current := newModel(service, packer.Raw, true, nil, time.Now)
 	current.input.SetValue("actual")
@@ -465,7 +465,7 @@ func TestModelKeywordSearchUsesSelectedResultURL(t *testing.T) {
 }
 
 func TestModelFilterAndManualRangePreserveDiscoveredIdentity(t *testing.T) {
-	chapters := []komiku.Chapter{
+	chapters := []kiryuu.Chapter{
 		{RawID: "1", Display: "1", Number: 1, URL: "https://fixture.invalid/chapter/custom-a/"},
 		{RawID: "2", Display: "2", Number: 2, URL: "https://fixture.invalid/chapter/custom-b/"},
 		{RawID: "271.5", Display: "271.5", Number: 271.5, URL: "https://fixture.invalid/chapter/extra/"},
@@ -498,18 +498,18 @@ func TestModelFilterAndManualRangePreserveDiscoveredIdentity(t *testing.T) {
 	}
 }
 func TestVolumeViewToggleLoadsWikipediaWithoutChangingDownloadLayout(t *testing.T) {
-	chapters := []komiku.Chapter{
+	chapters := []kiryuu.Chapter{
 		{RawID: "1", Display: "1", Number: 1, URL: "one"},
 		{RawID: "2", Display: "2", Number: 2, URL: "two"},
 		{RawID: "3", Display: "3", Number: 3, URL: "three"},
 	}
-	service := &fakeBackend{wikipediaVolumes: []komiku.Volume{{Volume: 1, Start: 1, End: 2}}}
+	service := &fakeBackend{wikipediaVolumes: []kiryuu.Volume{{Volume: 1, Start: 1, End: 2}}}
 	current := newModel(service, packer.Raw, true, nil, time.Now)
 	current.screen, current.seriesURL, current.chapters = chaptersScreen, "https://fixture.invalid/manga/series/", chapters
 	current.flat = false
 	current.selected[chapters[1].URL] = true
 	current.assignments[chapters[1].URL] = 9
-	current.mappings = []komiku.Volume{{Volume: 9, Start: 2, End: 2}}
+	current.mappings = []kiryuu.Volume{{Volume: 9, Start: 2, End: 2}}
 	beforeJobs := current.selectedJobs()
 
 	current, cmd := updateModel(t, current, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'v'}})
@@ -538,10 +538,10 @@ func TestVolumeViewToggleLoadsWikipediaWithoutChangingDownloadLayout(t *testing.
 	}
 }
 func TestWikipediaVolumeViewStatesRetryCacheAndIgnoreStaleResults(t *testing.T) {
-	chapter := komiku.Chapter{RawID: "1", Display: "1", Number: 1, URL: "one"}
+	chapter := kiryuu.Chapter{RawID: "1", Display: "1", Number: 1, URL: "one"}
 	service := &fakeBackend{wikipediaVolumesErr: errors.New("Wikipedia unavailable")}
 	current := newModel(service, packer.Raw, true, nil, time.Now)
-	current.screen, current.seriesURL, current.chapters = chaptersScreen, "https://fixture.invalid/manga/series/", []komiku.Chapter{chapter}
+	current.screen, current.seriesURL, current.chapters = chaptersScreen, "https://fixture.invalid/manga/series/", []kiryuu.Chapter{chapter}
 
 	current, cmd := updateModel(t, current, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'v'}})
 	if !current.groupView || !current.groupLoading || !strings.Contains(current.View(), "Loading volume groups from Wikipedia") {
@@ -553,7 +553,7 @@ func TestWikipediaVolumeViewStatesRetryCacheAndIgnoreStaleResults(t *testing.T) 
 	}
 
 	service.wikipediaVolumesErr = nil
-	service.wikipediaVolumes = []komiku.Volume{{Volume: 1, Start: 1, End: 1}}
+	service.wikipediaVolumes = []kiryuu.Volume{{Volume: 1, Start: 1, End: 1}}
 	current, cmd = updateModel(t, current, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'v'}})
 	current, _ = updateModel(t, current, cmd())
 	if service.wikipediaVolumeCalls != 2 || !current.groupLoaded || !current.groupView {
@@ -565,7 +565,7 @@ func TestWikipediaVolumeViewStatesRetryCacheAndIgnoreStaleResults(t *testing.T) 
 		t.Fatalf("successful current-series mapping was not reused: calls=%d cmd=%v state=%+v", service.wikipediaVolumeCalls, cmd != nil, current)
 	}
 	newSeriesURL := "https://fixture.invalid/manga/new-series/"
-	service.chapters = []komiku.Chapter{{RawID: "2", Display: "2", Number: 2, URL: "new"}}
+	service.chapters = []kiryuu.Chapter{{RawID: "2", Display: "2", Number: 2, URL: "new"}}
 	discovering, discoverCmd := current.startDiscover(newSeriesURL)
 	current = discovering.(model)
 	current, _ = updateModel(t, current, discoverCmd())
@@ -578,9 +578,9 @@ func TestWikipediaVolumeViewStatesRetryCacheAndIgnoreStaleResults(t *testing.T) 
 		t.Fatalf("new series did not get its own lookup: calls=%d series=%q", service.wikipediaVolumeCalls, service.wikipediaVolumeSeries)
 	}
 
-	staleService := &fakeBackend{wikipediaVolumes: []komiku.Volume{{Volume: 9, Start: 1, End: 1}}}
+	staleService := &fakeBackend{wikipediaVolumes: []kiryuu.Volume{{Volume: 9, Start: 1, End: 1}}}
 	stale := newModel(staleService, packer.Raw, true, nil, time.Now)
-	stale.screen, stale.seriesURL, stale.chapters = chaptersScreen, "https://fixture.invalid/manga/stale/", []komiku.Chapter{chapter}
+	stale.screen, stale.seriesURL, stale.chapters = chaptersScreen, "https://fixture.invalid/manga/stale/", []kiryuu.Chapter{chapter}
 	stale, staleCmd := updateModel(t, stale, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'v'}})
 	stale, _ = updateModel(t, stale, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'v'}})
 	stale, _ = updateModel(t, stale, staleCmd())
@@ -592,14 +592,14 @@ func TestWikipediaVolumeViewStatesRetryCacheAndIgnoreStaleResults(t *testing.T) 
 	}
 }
 func TestWikipediaLoadIsCancelledWhenRangeOrDownloadSupersedesIt(t *testing.T) {
-	chapter := komiku.Chapter{RawID: "1", Display: "1", Number: 1, URL: "one"}
+	chapter := kiryuu.Chapter{RawID: "1", Display: "1", Number: 1, URL: "one"}
 	service := &fakeBackend{
-		wikipediaVolumes: []komiku.Volume{{Volume: 1, Start: 1, End: 1}},
+		wikipediaVolumes: []kiryuu.Volume{{Volume: 1, Start: 1, End: 1}},
 		batch:            &fakeBatch{events: make(chan cli.Event)},
 	}
 
 	rangeModel := newModel(service, packer.Raw, true, nil, time.Now)
-	rangeModel.screen, rangeModel.seriesURL, rangeModel.chapters = chaptersScreen, "https://fixture.invalid/manga/series/", []komiku.Chapter{chapter}
+	rangeModel.screen, rangeModel.seriesURL, rangeModel.chapters = chaptersScreen, "https://fixture.invalid/manga/series/", []kiryuu.Chapter{chapter}
 	rangeModel, staleRangeCmd := updateModel(t, rangeModel, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'v'}})
 	rangeModel, _ = updateModel(t, rangeModel, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'r'}})
 	rangeModel, _ = updateModel(t, rangeModel, staleRangeCmd())
@@ -608,7 +608,7 @@ func TestWikipediaLoadIsCancelledWhenRangeOrDownloadSupersedesIt(t *testing.T) {
 	}
 
 	downloadModel := newModel(service, packer.Raw, true, nil, time.Now)
-	downloadModel.screen, downloadModel.seriesURL, downloadModel.chapters = chaptersScreen, "https://fixture.invalid/manga/series/", []komiku.Chapter{chapter}
+	downloadModel.screen, downloadModel.seriesURL, downloadModel.chapters = chaptersScreen, "https://fixture.invalid/manga/series/", []kiryuu.Chapter{chapter}
 	downloadModel.selected[chapter.URL] = true
 	downloadModel, staleDownloadCmd := updateModel(t, downloadModel, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'v'}})
 	downloadModel, _ = updateModel(t, downloadModel, tea.KeyMsg{Type: tea.KeyEnter})
@@ -619,12 +619,12 @@ func TestWikipediaLoadIsCancelledWhenRangeOrDownloadSupersedesIt(t *testing.T) {
 }
 
 func TestWikipediaVolumeHeadersAreFocusableAggregateControls(t *testing.T) {
-	chapters := []komiku.Chapter{
+	chapters := []kiryuu.Chapter{
 		{RawID: "1", Display: "1", Number: 1, URL: "one"},
 		{RawID: "2", Display: "2", Number: 2, URL: "two"},
 		{RawID: "3", Display: "3", Number: 3, URL: "extra"},
 	}
-	service := &fakeBackend{wikipediaVolumes: []komiku.Volume{{Volume: 1, Start: 1, End: 2}}}
+	service := &fakeBackend{wikipediaVolumes: []kiryuu.Volume{{Volume: 1, Start: 1, End: 2}}}
 	current := newModel(service, packer.Raw, true, nil, time.Now)
 	current.screen, current.seriesURL, current.chapters = chaptersScreen, "https://fixture.invalid/manga/series/", chapters
 	current, cmd := updateModel(t, current, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'v'}})
@@ -652,12 +652,12 @@ func TestWikipediaVolumeHeadersAreFocusableAggregateControls(t *testing.T) {
 }
 
 func TestWikipediaVolumeHeadersExcludeFractionalExtras(t *testing.T) {
-	chapters := []komiku.Chapter{
+	chapters := []kiryuu.Chapter{
 		{RawID: "1", Display: "1", Number: 1, URL: "one"},
 		{RawID: "2", Display: "2", Number: 2, URL: "two"},
 		{RawID: "2.5", Display: "2.5", Number: 2.5, URL: "extra"},
 	}
-	service := &fakeBackend{wikipediaVolumes: []komiku.Volume{{Volume: 1, Start: 1, End: 2}}}
+	service := &fakeBackend{wikipediaVolumes: []kiryuu.Volume{{Volume: 1, Start: 1, End: 2}}}
 	current := newModel(service, packer.Raw, true, nil, time.Now)
 	current.screen, current.seriesURL, current.chapters = chaptersScreen, "https://fixture.invalid/manga/series/", chapters
 	current, cmd := updateModel(t, current, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'v'}})
@@ -673,7 +673,7 @@ func TestWikipediaVolumeHeadersExcludeFractionalExtras(t *testing.T) {
 }
 
 func TestCompleteWikipediaHeaderSelectionEnablesDonePack(t *testing.T) {
-	chapters := []komiku.Chapter{
+	chapters := []kiryuu.Chapter{
 		{RawID: "1", Display: "1", Number: 1, URL: "one"},
 		{RawID: "2", Display: "2", Number: 2, URL: "two"},
 	}
@@ -699,7 +699,7 @@ func TestCompleteWikipediaHeaderSelectionEnablesDonePack(t *testing.T) {
 	events := make(chan cli.Event)
 	close(events)
 	service := &fakeBackend{
-		wikipediaVolumes: []komiku.Volume{{Volume: 1, Start: 1, End: 2}},
+		wikipediaVolumes: []kiryuu.Volume{{Volume: 1, Start: 1, End: 2}},
 		batch:            &fakeBatch{events: events, summary: cli.Summary{Results: results, Counts: map[cli.Status]int{cli.Done: 2}}},
 		packStore:        seriesStore,
 	}
@@ -727,7 +727,7 @@ func TestCompleteWikipediaHeaderSelectionEnablesDonePack(t *testing.T) {
 }
 
 func TestIncompleteWikipediaSelectionsStayFlatAndPackAsChapterRun(t *testing.T) {
-	chapters := []komiku.Chapter{
+	chapters := []kiryuu.Chapter{
 		{RawID: "1", Display: "1", Number: 1, URL: "one"},
 		{RawID: "2", Display: "2", Number: 2, URL: "two"},
 		{RawID: "2.5", Display: "2.5", Number: 2.5, URL: "extra"},
@@ -748,7 +748,7 @@ func TestIncompleteWikipediaSelectionsStayFlatAndPackAsChapterRun(t *testing.T) 
 			current.screen, current.seriesURL, current.chapters = chaptersScreen, "https://fixture.invalid/manga/series/", chapters
 			current.selected = test.selected
 			current.groupLoaded = true
-			current.groupMappings = []komiku.Volume{{Volume: 1, Start: 1, End: 2}}
+			current.groupMappings = []kiryuu.Volume{{Volume: 1, Start: 1, End: 2}}
 			current.explicitFlat = test.explicitFlat
 
 			current, _ = updateModel(t, current, tea.KeyMsg{Type: tea.KeyEnter})
@@ -768,7 +768,7 @@ func TestIncompleteWikipediaSelectionsStayFlatAndPackAsChapterRun(t *testing.T) 
 }
 
 func TestDoneFlatRunWithFractionalExtrasPacksInline(t *testing.T) {
-	chapters := []komiku.Chapter{
+	chapters := []kiryuu.Chapter{
 		{RawID: "1", Display: "1", Number: 1, URL: "one"},
 		{RawID: "1.1", Display: "1.1", Number: 1.1, URL: "extra-one"},
 		{RawID: "2", Display: "2", Number: 2, URL: "two"},
@@ -814,14 +814,14 @@ func TestDoneFlatRunWithFractionalExtrasPacksInline(t *testing.T) {
 	}
 }
 func TestWikipediaVolumeNavigationUsesRenderedControlOrderAndSkipsExtrasHeading(t *testing.T) {
-	chapters := []komiku.Chapter{
+	chapters := []kiryuu.Chapter{
 		{RawID: "1", Display: "1", Number: 1, URL: "one"},
 		{RawID: "2", Display: "2", Number: 2, URL: "two"},
 		{RawID: "3", Display: "3", Number: 3, URL: "three"},
 		{RawID: "4", Display: "4", Number: 4, URL: "four"},
 		{RawID: "5", Display: "5", Number: 5, URL: "extra"},
 	}
-	service := &fakeBackend{wikipediaVolumes: []komiku.Volume{{Volume: 1, Start: 1, End: 2}, {Volume: 2, Start: 3, End: 4}}}
+	service := &fakeBackend{wikipediaVolumes: []kiryuu.Volume{{Volume: 1, Start: 1, End: 2}, {Volume: 2, Start: 3, End: 4}}}
 	current := newModel(service, packer.Raw, true, nil, time.Now)
 	current.screen, current.seriesURL, current.chapters = chaptersScreen, "https://fixture.invalid/manga/series/", chapters
 	current, cmd := updateModel(t, current, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'v'}})
@@ -851,12 +851,12 @@ func TestWikipediaVolumeNavigationUsesRenderedControlOrderAndSkipsExtrasHeading(
 }
 
 func TestWikipediaVolumeAggregateUsesFullDiscoveredMembershipUnderFilter(t *testing.T) {
-	chapters := []komiku.Chapter{
+	chapters := []kiryuu.Chapter{
 		{RawID: "1", Display: "one", Number: 1, URL: "one"},
 		{RawID: "2", Display: "two", Number: 2, URL: "two"},
 		{RawID: "3", Display: "three", Number: 3, URL: "three"},
 	}
-	service := &fakeBackend{wikipediaVolumes: []komiku.Volume{{Volume: 1, Start: 1, End: 4}}}
+	service := &fakeBackend{wikipediaVolumes: []kiryuu.Volume{{Volume: 1, Start: 1, End: 4}}}
 	current := newModel(service, packer.Raw, true, nil, time.Now)
 	current.screen, current.seriesURL, current.chapters = chaptersScreen, "https://fixture.invalid/manga/series/", chapters
 	current.selected["one"] = true
@@ -888,11 +888,11 @@ func TestWikipediaVolumeAggregateUsesFullDiscoveredMembershipUnderFilter(t *test
 }
 
 func TestWikipediaVolumeFocusHandoffAndAsyncInsertionUseChapterIdentity(t *testing.T) {
-	chapters := []komiku.Chapter{
+	chapters := []kiryuu.Chapter{
 		{RawID: "1", Display: "1", Number: 1, URL: "one"},
 		{RawID: "2", Display: "2", Number: 2, URL: "two"},
 	}
-	service := &fakeBackend{wikipediaVolumes: []komiku.Volume{{Volume: 1, Start: 1, End: 2}}}
+	service := &fakeBackend{wikipediaVolumes: []kiryuu.Volume{{Volume: 1, Start: 1, End: 2}}}
 	current := newModel(service, packer.Raw, true, nil, time.Now)
 	current.screen, current.seriesURL, current.chapters = chaptersScreen, "https://fixture.invalid/manga/series/", chapters
 	current, cmd := updateModel(t, current, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'v'}})
@@ -917,17 +917,17 @@ func TestWikipediaVolumeFocusHandoffAndAsyncInsertionUseChapterIdentity(t *testi
 }
 
 func TestWikipediaVolumeAggregateRespectsMappedEligibilityAndDownloadInvariants(t *testing.T) {
-	chapters := []komiku.Chapter{
+	chapters := []kiryuu.Chapter{
 		{RawID: "1", Display: "1", Number: 1, URL: "one"},
 		{RawID: "2", Display: "2", Number: 2, URL: "two"},
 	}
-	service := &fakeBackend{wikipediaVolumes: []komiku.Volume{{Volume: 1, Start: 1, End: 2}}}
+	service := &fakeBackend{wikipediaVolumes: []kiryuu.Volume{{Volume: 1, Start: 1, End: 2}}}
 	current := newModel(service, packer.Raw, true, nil, time.Now)
 	current.screen, current.seriesURL, current.chapters = chaptersScreen, "https://fixture.invalid/manga/series/", chapters
 	current.flat = false
 	current.selected["two"] = true
 	current.assignments["two"] = 9
-	current.mappings = []komiku.Volume{{Volume: 9, Start: 2, End: 2}}
+	current.mappings = []kiryuu.Volume{{Volume: 9, Start: 2, End: 2}}
 	beforeJobs := current.selectedJobs()
 	current, cmd := updateModel(t, current, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'v'}})
 	current, _ = updateModel(t, current, cmd())
@@ -961,13 +961,13 @@ func TestWikipediaVolumeEmptyMappingKeepsFlatViewAndCanRetry(t *testing.T) {
 	service := &fakeBackend{}
 	current := newModel(service, packer.Raw, true, nil, time.Now)
 	current.screen, current.seriesURL = chaptersScreen, "https://fixture.invalid/manga/series/"
-	current.chapters = []komiku.Chapter{{RawID: "1", Display: "1", Number: 1, URL: "one"}}
+	current.chapters = []kiryuu.Chapter{{RawID: "1", Display: "1", Number: 1, URL: "one"}}
 	current, cmd := updateModel(t, current, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'v'}})
 	current, _ = updateModel(t, current, cmd())
 	if current.groupView || !current.groupEmpty || !strings.Contains(current.View(), "[NO MAP] Wikipedia has no usable volume grouping.") {
 		t.Fatalf("empty mapping state is not recoverable: %+v\n%s", current, current.View())
 	}
-	service.wikipediaVolumes = []komiku.Volume{{Volume: 1, Start: 1, End: 1}}
+	service.wikipediaVolumes = []kiryuu.Volume{{Volume: 1, Start: 1, End: 1}}
 	current, cmd = updateModel(t, current, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'v'}})
 	if cmd == nil {
 		t.Fatal("v did not retry an empty mapping")
@@ -976,8 +976,8 @@ func TestWikipediaVolumeEmptyMappingKeepsFlatViewAndCanRetry(t *testing.T) {
 
 func TestModelURLFallbackAndRecoverableEmptyAndErrorStates(t *testing.T) {
 	seriesURL := "https://fixture.invalid/manga/actual-series/"
-	chapter := komiku.Chapter{RawID: "271-5", Display: "271.5", Number: 271.5, URL: "https://fixture.invalid/actual-series-chapter-271-5/"}
-	service := &fakeBackend{chapters: []komiku.Chapter{chapter}}
+	chapter := kiryuu.Chapter{RawID: "271-5", Display: "271.5", Number: 271.5, URL: "https://fixture.invalid/actual-series-chapter-271-5/"}
+	service := &fakeBackend{chapters: []kiryuu.Chapter{chapter}}
 	current := newModel(service, packer.Raw, true, nil, time.Now)
 	current.input.SetValue(seriesURL)
 	current, cmd := updateModel(t, current, tea.KeyMsg{Type: tea.KeyEnter})
@@ -1019,7 +1019,7 @@ func TestModelURLFallbackAndRecoverableEmptyAndErrorStates(t *testing.T) {
 
 func TestModelInvalidPastedSeriesURLIsRecoverableDiscoveryError(t *testing.T) {
 	seriesURL := "https://attacker.invalid/manga/series/"
-	_, validationErr := komiku.ValidateSeriesURL(seriesURL)
+	_, validationErr := kiryuu.ValidateSeriesURL(seriesURL)
 	if validationErr == nil {
 		t.Fatal("test URL unexpectedly passed canonical validation")
 	}
@@ -1041,14 +1041,14 @@ func TestModelInvalidPastedSeriesURLIsRecoverableDiscoveryError(t *testing.T) {
 }
 
 func TestModelPauseResumeAndSafeStopWaitsForBatchClose(t *testing.T) {
-	chapter := komiku.Chapter{RawID: "1", Display: "1", Number: 1, URL: "https://fixture.invalid/chapter/one/"}
+	chapter := kiryuu.Chapter{RawID: "1", Display: "1", Number: 1, URL: "https://fixture.invalid/chapter/one/"}
 	batch := &fakeBatch{
 		events:  make(chan cli.Event, 4),
 		summary: cli.Summary{Results: []cli.Result{{Chapter: chapter, Status: cli.Part}}, Counts: map[cli.Status]int{cli.Part: 1}, Requested: 1, Started: 1, Cancelled: true},
 	}
 	service := &fakeBackend{batch: batch, packPlan: cli.PackPlan{DisabledReason: "Only mapped volume runs can be packed."}}
 	current := newModel(service, packer.Raw, true, nil, time.Now)
-	current.screen, current.seriesURL, current.chapters = chaptersScreen, "https://fixture.invalid/manga/series/", []komiku.Chapter{chapter}
+	current.screen, current.seriesURL, current.chapters = chaptersScreen, "https://fixture.invalid/manga/series/", []kiryuu.Chapter{chapter}
 	current.selected[chapter.URL] = true
 	current, waitCmd := updateModel(t, current, tea.KeyMsg{Type: tea.KeyEnter})
 	if current.screen != downloadingScreen || len(service.startedJobs) != 1 {
@@ -1082,7 +1082,7 @@ func TestModelPauseResumeAndSafeStopWaitsForBatchClose(t *testing.T) {
 
 func TestModelProgressMetricsTailAndPackLifecycle(t *testing.T) {
 	now := time.Unix(20, 0)
-	chapter := komiku.Chapter{RawID: "1", Display: "1", Number: 1, URL: "https://fixture.invalid/chapter/one/"}
+	chapter := kiryuu.Chapter{RawID: "1", Display: "1", Number: 1, URL: "https://fixture.invalid/chapter/one/"}
 	service := &fakeBackend{
 		packPlan:     cli.PackPlan{Preset: packer.Raw, Volumes: []packer.Volume{{Series: "series", Number: 1}}},
 		packOutcomes: []cli.PackOutcome{{Volume: 1, Result: packer.Result{Path: "series Volume 01.cbz", Preset: packer.Raw}}},
@@ -1122,8 +1122,8 @@ func TestModelProgressMetricsTailAndPackLifecycle(t *testing.T) {
 }
 
 func TestModelFatalSummaryAndUniqueResultErrors(t *testing.T) {
-	chapterOne := komiku.Chapter{RawID: "1", Display: "1", Number: 1, URL: "one"}
-	chapterTwo := komiku.Chapter{RawID: "2", Display: "2", Number: 2, URL: "two"}
+	chapterOne := kiryuu.Chapter{RawID: "1", Display: "1", Number: 1, URL: "one"}
+	chapterTwo := kiryuu.Chapter{RawID: "2", Display: "2", Number: 2, URL: "two"}
 	service := &fakeBackend{packPlan: cli.PackPlan{DisabledReason: "not packable"}}
 	current := newModel(service, packer.Raw, true, nil, time.Now)
 	current.applyEngineEvent(cli.Event{Kind: cli.PageFailed, Chapter: chapterOne, Page: 2, Pages: 3, Err: errors.New("image failed")})
@@ -1158,7 +1158,7 @@ func TestModelFatalSummaryAndUniqueResultErrors(t *testing.T) {
 }
 
 func TestManualRangeInvalidVolumeSelectionDoesNotPersist(t *testing.T) {
-	chapters := []komiku.Chapter{
+	chapters := []kiryuu.Chapter{
 		{RawID: "1", Display: "1", Number: 1, URL: "one"},
 		{RawID: "2", Display: "2", Number: 2, URL: "two"},
 	}
@@ -1175,14 +1175,14 @@ func TestManualRangeInvalidVolumeSelectionDoesNotPersist(t *testing.T) {
 }
 
 func TestMappedSelectionPreservesMappingsAndLimitsToggles(t *testing.T) {
-	chapters := []komiku.Chapter{
+	chapters := []kiryuu.Chapter{
 		{RawID: "1", Display: "1", Number: 1, URL: "one"},
 		{RawID: "2", Display: "2", Number: 2, URL: "two"},
 		{RawID: "3", Display: "3", Number: 3, URL: "unmapped"},
 	}
 	current := newModel(&fakeBackend{}, packer.Raw, true, nil, time.Now)
 	current.screen, current.chapters = chaptersScreen, chapters
-	current.applyVolumeJobs([]cli.Job{{Chapter: chapters[0], Volume: 1}, {Chapter: chapters[1], Volume: 1}}, []komiku.Volume{{Volume: 1, Start: 1, End: 2}})
+	current.applyVolumeJobs([]cli.Job{{Chapter: chapters[0], Volume: 1}, {Chapter: chapters[1], Volume: 1}}, []kiryuu.Volume{{Volume: 1, Start: 1, End: 2}})
 
 	current.chapterCursor = 2
 	current, _ = updateModel(t, current, tea.KeyMsg{Type: tea.KeySpace})
@@ -1214,7 +1214,7 @@ func TestMappedSelectionPreservesMappingsAndLimitsToggles(t *testing.T) {
 }
 
 func TestVisibleAllOnlyTogglesFilteredItemsAndNoSelectionDoesNotStart(t *testing.T) {
-	chapters := []komiku.Chapter{
+	chapters := []kiryuu.Chapter{
 		{RawID: "1", Display: "one", Number: 1, URL: "one"},
 		{RawID: "2", Display: "two", Number: 2, URL: "two"},
 	}
@@ -1246,8 +1246,8 @@ func TestStaleSearchDiscoveryAndVolumeMessagesAreIgnored(t *testing.T) {
 	current.operationID = 10
 	current.opCancel = func() {}
 	current, _ = updateModel(t, current, tea.KeyMsg{Type: tea.KeyEsc})
-	current.searchResults = []komiku.Series{{Title: "new"}}
-	current, _ = updateModel(t, current, searchMsg{id: 10, results: []komiku.Series{{Title: "old"}}})
+	current.searchResults = []kiryuu.Series{{Title: "new"}}
+	current, _ = updateModel(t, current, searchMsg{id: 10, results: []kiryuu.Series{{Title: "old"}}})
 	if len(current.searchResults) != 1 || current.searchResults[0].Title != "new" {
 		t.Fatalf("stale search overwrote state: %+v", current.searchResults)
 	}
@@ -1255,22 +1255,22 @@ func TestStaleSearchDiscoveryAndVolumeMessagesAreIgnored(t *testing.T) {
 	current.operationID = 20
 	current.screen = chaptersScreen
 	current.seriesURL = "new-series"
-	current.chapters = []komiku.Chapter{{RawID: "2", URL: "new"}}
-	current, _ = updateModel(t, current, discoverMsg{id: 19, seriesURL: "old-series", chapters: []komiku.Chapter{{RawID: "1", URL: "old"}}})
+	current.chapters = []kiryuu.Chapter{{RawID: "2", URL: "new"}}
+	current, _ = updateModel(t, current, discoverMsg{id: 19, seriesURL: "old-series", chapters: []kiryuu.Chapter{{RawID: "1", URL: "old"}}})
 	if current.seriesURL != "new-series" || current.chapters[0].RawID != "2" {
 		t.Fatalf("stale discovery overwrote state: url=%q chapters=%+v", current.seriesURL, current.chapters)
 	}
 
 	current.operationID = 30
 	current.flat = true
-	current, _ = updateModel(t, current, volumeSelectionMsg{id: 29, volumes: []komiku.Volume{{Volume: 1}}, jobs: []cli.Job{{Chapter: current.chapters[0], Volume: 1}}})
+	current, _ = updateModel(t, current, volumeSelectionMsg{id: 29, volumes: []kiryuu.Volume{{Volume: 1}}, jobs: []cli.Job{{Chapter: current.chapters[0], Volume: 1}}})
 	if !current.flat || len(current.mappings) != 0 {
 		t.Fatalf("stale volume selection overwrote state: %+v", current)
 	}
 }
 
 func TestRichAsyncOperationsRestartSpinner(t *testing.T) {
-	service := &fakeBackend{volumes: []komiku.Volume{{Volume: 1, Start: 1, End: 1}}}
+	service := &fakeBackend{volumes: []kiryuu.Volume{{Volume: 1, Start: 1, End: 1}}}
 	current := newModel(service, packer.Raw, false, nil, time.Now)
 	_, cmd := current.startSearch("query")
 	message := cmd()
@@ -1284,7 +1284,7 @@ func TestRichAsyncOperationsRestartSpinner(t *testing.T) {
 	}
 	current.screen = rangeScreen
 	current.rangeMode = volumeRange
-	current.chapters = []komiku.Chapter{{RawID: "1", Display: "1", Number: 1, URL: "one"}}
+	current.chapters = []kiryuu.Chapter{{RawID: "1", Display: "1", Number: 1, URL: "one"}}
 	current.rangeInput.SetValue("1")
 	ranged, cmd := current.applyRange()
 	current = ranged.(model)

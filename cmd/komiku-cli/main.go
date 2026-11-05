@@ -41,7 +41,7 @@ func main() {
 func newRootCommand(input io.Reader, stdout, stderr io.Writer) *cobra.Command {
 	root := cli.NewRootCommand(stdout, stderr, newDependencies())
 	root.SetIn(input)
-	root.Long = "komiku-cli downloads Komiku manga chapters and packs them into offline CBZ archives. Run without arguments for the interactive TUI."
+	root.Long = "komiku-cli downloads Kiryuu manga chapters and packs them into offline CBZ archives. Run without arguments for the interactive TUI."
 	var output string
 	root.Args = cobra.ArbitraryArgs
 	root.RunE = func(cmd *cobra.Command, args []string) error {

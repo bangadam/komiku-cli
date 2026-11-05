@@ -9,7 +9,7 @@ import (
 	"sort"
 	"strconv"
 
-	"github.com/bangadam/komiku-cli/komiku"
+	"github.com/bangadam/komiku-cli/kiryuu"
 	packer "github.com/bangadam/komiku-cli/pack"
 	"github.com/bangadam/komiku-cli/store"
 )
@@ -34,17 +34,17 @@ type PackOutcome struct {
 
 // PackChapterSource keeps a logical volume assignment independent from its physical page directory.
 type PackChapterSource struct {
-	Chapter       komiku.Chapter
+	Chapter       kiryuu.Chapter
 	Volume        int
 	Dir           string
 	ExpectedPages int
 	Complete      bool
 }
 
-// requiredChapterVolume returns the volume a chapter belongs to. Komiku
+// requiredChapterVolume returns the volume a chapter belongs to. Kiryuu
 // publishes some chapters as fractional parts (1.1, 1.2), so the whole part
 // decides the volume and the fraction only orders it inside that volume.
-func requiredChapterVolume(number float64, mappings []komiku.Volume) int {
+func requiredChapterVolume(number float64, mappings []kiryuu.Volume) int {
 	if number <= 0 {
 		return 0
 	}
@@ -59,7 +59,7 @@ func requiredChapterVolume(number float64, mappings []komiku.Volume) int {
 
 // dropFractionalExtras removes fractional chapters (2.5) that merely
 // supplement a whole chapter (2) already present in the same volume. When a
-// volume contains only fractional parts (Komiku splits 1 into 1.1 and 1.2),
+// volume contains only fractional parts (Kiryuu splits 1 into 1.1 and 1.2),
 // those parts are the volume's chapters and are kept.
 func dropFractionalExtras[T any](items []T, number func(T) float64) []T {
 	whole := make(map[int]bool, len(items))
@@ -80,7 +80,7 @@ func dropFractionalExtras[T any](items []T, number func(T) float64) []T {
 	return kept
 }
 
-func PreparePack(seriesStore *store.SeriesStore, series string, preset packer.Preset, mappings []komiku.Volume, jobs []Job, results []Result) PackPlan {
+func PreparePack(seriesStore *store.SeriesStore, series string, preset packer.Preset, mappings []kiryuu.Volume, jobs []Job, results []Result) PackPlan {
 	// No volume mapping: fall back to one contiguous chapter-run archive
 	// ("Series Chapters X-Y") so flat downloads remain packable.
 	if len(mappings) == 0 {
@@ -196,11 +196,11 @@ func formatPackNumber(number float64) string {
 
 // PreparePackSources validates complete logical volumes while reading pages directly from
 // the explicit source directories supplied by the caller.
-func PreparePackSources(seriesDir, series string, preset packer.Preset, mappings []komiku.Volume, sources []PackChapterSource) PackPlan {
+func PreparePackSources(seriesDir, series string, preset packer.Preset, mappings []kiryuu.Volume, sources []PackChapterSource) PackPlan {
 	return preparePackSources(seriesDir, "", series, preset, mappings, sources)
 }
 
-func preparePackSources(seriesDir, sourceRoot, series string, preset packer.Preset, mappings []komiku.Volume, sources []PackChapterSource) PackPlan {
+func preparePackSources(seriesDir, sourceRoot, series string, preset packer.Preset, mappings []kiryuu.Volume, sources []PackChapterSource) PackPlan {
 	plan := PackPlan{Preset: preset}
 	if len(mappings) == 0 {
 		plan.DisabledReason = "Packing needs a volume mapping."
@@ -275,7 +275,7 @@ func preparePackSources(seriesDir, sourceRoot, series string, preset packer.Pres
 	return plan
 }
 
-func validatePackVolumeSources(mapping komiku.Volume, sources []PackChapterSource) error {
+func validatePackVolumeSources(mapping kiryuu.Volume, sources []PackChapterSource) error {
 	if mapping.Volume <= 0 || mapping.Volume > maxSelectedVolume || mapping.Start <= 0 || mapping.End < mapping.Start || mapping.End > maxPackChapterNumber || mapping.End-mapping.Start+1 > store.MaxChapterPages {
 		return errors.New("volume declaration must be a bounded positive integer range")
 	}
@@ -283,7 +283,7 @@ func validatePackVolumeSources(mapping komiku.Volume, sources []PackChapterSourc
 	seenNumbers := make(map[float64]bool, required)
 	seenSources := make(map[string]bool, required)
 	// covered tracks which whole chapter numbers the volume actually has.
-	// Komiku splits some chapters into fractional parts (1.1, 1.2), so a
+	// Kiryuu splits some chapters into fractional parts (1.1, 1.2), so a
 	// volume declared as 1-4 may legitimately contain 1.1, 1.2, 2.1, 3, 4.
 	covered := make(map[int]bool, required)
 	for _, source := range sources {

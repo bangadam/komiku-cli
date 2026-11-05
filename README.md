@@ -1,9 +1,9 @@
 # komiku-cli
 
 A keyboard-first manga downloader and CBZ packer for
-[Komiku](https://komiku.org), written in Go.
+[Kiryuu](https://v7.kiryuu.to/), written in Go.
 
-`komiku-cli` searches Komiku, downloads chapters, tracks what you already have,
+`komiku-cli` searches Kiryuu, downloads chapters, tracks what you already have,
 and packs finished series into CBZ archives you can read offline. Use the
 interactive terminal UI or run the same commands headlessly from scripts. A
 desktop GUI in `gui/` drives the real binary.
@@ -11,7 +11,7 @@ desktop GUI in `gui/` drives the real binary.
 ## Features
 
 - Interactive TUI (Bubble Tea + Lip Gloss) operated entirely by keyboard
-- Search by title, or open a Komiku series URL directly
+- Search by title, or open a Kiryuu series URL directly
 - Select chapters by number, range, or mapped volume
 - Resume interrupted downloads without re-fetching valid pages
 - Paced requests with retries, image validation, and safe cancellation
@@ -22,7 +22,7 @@ desktop GUI in `gui/` drives the real binary.
 - Cobra command tree with generated `--help` for every command
 - Headless downloads with JSON reports for scripts (`dl --no-tui --json`)
 - Headless search and series inspection with JSON output (`search`, `info`)
-- Discovery commands: `ranking`, `trending`, `latest`, `new`, `random`, `catalog`, `genres`, and `genre <name>`
+- Discovery commands: `ranking` (all-time popularity), `trending` (recent updates), `latest`, `new`, `random`, `catalog`, `genres`, and `genre <name>`
 - Cover art saved into the series folder (`cover`, `cover --all`, or automatically after `dl`)
 - Chapter selectors `--ch all`, `--ch missing`, and `--ch latest:N`
 - Offline integrity check with `verify <series-dir>`
@@ -66,7 +66,7 @@ komiku-cli
 
 The sidebar has four screens:
 
-1. `Search`: find a title or open a Komiku URL, pick chapters, then download.
+1. `Search`: find a title or open a Kiryuu URL, pick chapters, then download.
 2. `To CBZ`: pack an existing download without fetching images again.
 3. `Downloads`: review local download status and pick a series to pack.
 4. `Settings`: change the download folder and the CBZ preset.
@@ -89,13 +89,13 @@ komiku-cli dl --help
 `dl` runs headless only, so pass `--no-tui`. Download selected chapters:
 
 ```sh
-komiku-cli dl https://komiku.org/manga/example/ --ch 1-20,25.5 --no-tui
+komiku-cli dl https://v7.kiryuu.to/manga/example/ --ch 1-20,25.5 --no-tui
 ```
 
 Download mapped volumes and pack them immediately:
 
 ```sh
-komiku-cli dl https://komiku.org/manga/example/ \
+komiku-cli dl https://v7.kiryuu.to/manga/example/ \
   --vol 1-3 --no-tui --pack --preset medium
 ```
 
@@ -115,7 +115,7 @@ Inspect what a series offers and what you already have locally before
 downloading:
 
 ```sh
-komiku-cli info https://komiku.org/manga/example/
+komiku-cli info https://v7.kiryuu.to/manga/example/
 ```
 
 Every chapter is marked `[x]` when it is already complete in the configured
@@ -123,19 +123,19 @@ library folder, or `[ ]` when it is still missing:
 
 ```text
 example  chapters=2 done=1
-[x] 1  https://komiku.org/example-chapter-1/
-[ ] 2  https://komiku.org/example-chapter-2/
+[x] 1  https://v7.kiryuu.to/?chapter=example-chapter-1
+[ ] 2  https://v7.kiryuu.to/?chapter=example-chapter-2
 ```
 
 `info --json` returns the same data as a machine-readable report.
 
 ### Cover art
 
-Cover art comes from the series page on Komiku and is saved in the series
+Cover art comes from the series page on Kiryuu and is saved in the series
 folder as `cover.jpg` (or `.jpeg` / `.png` / `.webp`, matching the source URL):
 
 ```sh
-komiku-cli cover https://komiku.org/manga/example/
+komiku-cli cover https://v7.kiryuu.to/manga/example/
 komiku-cli cover --all          # backfill every series in the library
 komiku-cli cover --all --force  # refresh existing covers
 ```
@@ -156,8 +156,8 @@ being read.
 Download every chapter a series offers, or only the ones you are missing:
 
 ```sh
-komiku-cli dl https://komiku.org/manga/example/ --ch all --no-tui
-komiku-cli dl https://komiku.org/manga/example/ --ch missing --no-tui
+komiku-cli dl https://v7.kiryuu.to/manga/example/ --ch all --no-tui
+komiku-cli dl https://v7.kiryuu.to/manga/example/ --ch missing --no-tui
 ```
 
 `--ch missing` re-checks the series page, skips every chapter already marked
@@ -165,7 +165,7 @@ done, and downloads only the remainder. That makes it a good fit for a weekly
 cron job:
 
 ```cron
-0 9 * * mon  komiku-cli dl https://komiku.org/manga/example/ --ch missing --no-tui --json
+0 9 * * mon  komiku-cli dl https://v7.kiryuu.to/manga/example/ --ch missing --no-tui --json
 ```
 
 When nothing is missing, the command prints
@@ -220,21 +220,27 @@ directories that are not series are skipped.
 
 ## Discovery
 
-Browse komiku.org without downloading anything. Every command supports `--json`
+Browse v7.kiryuu.to without downloading anything. Every command supports `--json`
 for scripts and for the desktop GUI.
 
 ```sh
-komiku-cli ranking --period daily          # daily | weekly | monthly | all
-komiku-cli trending --period 7d --limit 20 # 24h | 7d | 30d | active
+komiku-cli ranking                         # all-time popularity board
+komiku-cli trending --limit 20             # most recently updated titles
 komiku-cli latest --type manga --page 2    # newest chapters
 komiku-cli new --type manhwa               # newest titles
 komiku-cli random                          # random selection
-komiku-cli catalog --letter A --page 2     # A–Z catalogue with per-letter counts
+komiku-cli catalog --page 2                # catalogue pages
 komiku-cli catalog --status ongoing        # filter by publication status
 komiku-cli genres                          # genre index with title counts
 komiku-cli genre action --sort rating      # update | date | rating | random
 komiku-cli latest --genre action --genre2 fantasy   # combine two genres
 ```
+
+Kiryuu serves a single all-time ranking board, so `ranking --period` accepts the
+old values and reports that one board. `trending` lists recently updated titles;
+its `--period` flag is accepted for compatibility. `catalog` has no letter
+filter upstream, so `--letter` is accepted but not applied, and `--status` is
+filtered client-side on the fetched page.
 
 `latest`, `new`, and `random` share the same filters: `--type`, `--genre`,
 `--genre2`, and `--page`.
@@ -243,9 +249,7 @@ Every series entry has the same shape: title, slug, URL, cover, type, genres,
 status, rank, views, latest chapter, and update time. `search --json` prints an
 array of entries. The other discovery commands print a report object: `latest`,
 `new`, `random`, `genre`, `ranking`, `trending`, and `catalog` put their entries
-in `series`, and `genres` returns the genre index. Cover URLs are rewritten from
-`thumbnail.komiku.to` to `thumbnail.komiku.org`, because the `.to` host does not
-resolve on every network.
+in `series`, and `genres` returns the genre index.
 
 ## Offline packing
 
@@ -277,7 +281,7 @@ komiku-cli pack "/path/to/manga/example" \
 the volume list before packing:
 
 ```sh
-komiku-cli info "https://komiku.org/manga/example/" --offline --volumes --json
+komiku-cli info "https://v7.kiryuu.to/manga/example/" --offline --volumes --json
 ```
 
 Volume mappings come from **MangaDex by default**. The query has no language
@@ -322,7 +326,7 @@ Flat packing refuses a series that already has a `.pack.json`; use the normal
 `pack` command there.
 
 Recovery may look up a volume mapping online, but neither recovery nor flat
-packing requests Komiku chapter pages or downloads images. Normal pack runs stay
+packing requests Kiryuu chapter pages or downloads images. Normal pack runs stay
 offline.
 
 ## CBZ presets
@@ -369,7 +373,7 @@ current directory, a `200ms` image delay, and the `medium` preset.
 
 ## Download safety
 
-- Every command that takes a series URL validates it against Komiku first.
+- Every command that takes a series URL validates it against Kiryuu first.
 - A chapter is marked complete only after every expected page succeeds.
 - In the TUI, `q` stops downloads and packing at a safe boundary.
 - Pack manifests use root-relative paths and reject unsafe source traversal.
@@ -391,10 +395,10 @@ Build the CLI:
 go build -o /tmp/komiku-cli ./cmd/komiku-cli
 ```
 
-Run the live discovery tests (they hit komiku.org):
+Run the live discovery tests (they hit v7.kiryuu.to):
 
 ```sh
-go test ./komiku/ -tags online -run TestOnline
+go test ./kiryuu/ -tags online -run TestOnline
 ```
 
 ### Desktop GUI
@@ -426,8 +430,8 @@ CLI output rather than mocks.
 
 ### Cloudflare challenges
 
-Komiku protects chapter pages with a Cloudflare challenge that rejects plain
-HTTP clients with `403 Forbidden`. When a Camoufox-based solver is available,
+Kiryuu can answer with a Cloudflare challenge that rejects plain HTTP clients
+with `403 Forbidden`. When a Camoufox-based solver is available,
 `komiku-cli` hands the challenged URL to it and retries with the browser
 session it returns:
 
@@ -445,7 +449,7 @@ keep failing with the plain `403` error.
 
 ## Disclaimer
 
-This project is an independent client and is not affiliated with Komiku.
+This project is an independent client and is not affiliated with Kiryuu.
 Follow the source website's terms and applicable law. Download only content
 you are authorized to access.
 

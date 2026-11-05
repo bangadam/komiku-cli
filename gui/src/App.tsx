@@ -107,7 +107,7 @@ export default function App() {
                   series.slug,
                   series.url ??
                     librarySeriesUrl(series.slug) ??
-                    `https://komiku.org/manga/${series.slug}/`,
+                    `https://v7.kiryuu.to/manga/${series.slug}/`,
                   chapter
                 )
               }

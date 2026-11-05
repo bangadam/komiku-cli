@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Real loopback Komiku pages and an isolated library for reader E2E tests.
+"""Real loopback Kiryuu pages and an isolated library for reader E2E tests.
 
 Run with --help for startup options. This serves upstream HTML/images only;
 it does not replace the Go CLI, Vite bridge, or reader UI.
@@ -19,7 +19,7 @@ import struct
 import sys
 import tempfile
 import threading
-from urllib.parse import urlsplit
+from urllib.parse import parse_qs, urlsplit
 import zlib
 
 
@@ -160,7 +160,8 @@ class ReaderFixture:
         self.library.mkdir()
         self._lock = threading.Lock()
         self._closed = threading.Event()
-        self._requests: Counter[str] = Counter()
+        self._chapter_json: dict[str, tuple[str, bytes]] = {}
+        self._chapter_ids: dict[str, dict[str, int]] = {}
         self._completed: Counter[str] = Counter()
         self._failed_count = 0
         self._thread: threading.Thread | None = None
@@ -201,33 +202,46 @@ class ReaderFixture:
                 "APPDATA": str(self.home / "AppData" / "Roaming")}
 
     def _build(self) -> None:
-        for series, chapters in CHAPTERS.items():
+        for series_index, (series, chapters) in enumerate(CHAPTERS.items(), start=1):
             series_dir = self.library / series
             series_dir.mkdir()
             done = [1, 2] if series == "reader-fixture" else [1]
             (series_dir / ".state.json").write_text(json.dumps({"done": done}) + "\n",
                                                      encoding="utf-8")
+            ids: dict[str, int] = {}
             anchors = []
-            for chapter, count in chapters.items():
-                chapter_path = f"/{series}-chapter-{chapter}/"
-                display = chapter.lstrip("0").replace("-", ".")
-                anchors.append(f'<a href="{chapter_path}">Chapter {display}</a>')
+            for index, (chapter, count) in enumerate(chapters.items(), start=1):
+                chapter_id = series_index * 1000 + index
+                ids[chapter] = chapter_id
+                display = self.chapter_display(chapter)
+                slug = f"chapter-{display}.{chapter_id}"
+                chapter_url = f"{self.base_url}/manga/{series}/{slug}/"
                 images = []
                 for page in range(1, count + 1):
                     path = self.image_path(series, chapter, page)
                     data = page_png(series, chapter, page, count)
                     self._routes[path] = ("image/png", data)
                     self._images.add(path)
-                    # komiku.ExtractImageURLs requires class klazy (or ww) and
-                    # an absolute HTTP(S) src, not data-src or a relative URL.
-                    images.append(f'<img class="reader-page klazy" '
-                                  f'src="{self.base_url}{path}" width="{WIDTH}" height="{HEIGHT}" '
-                                  f'alt="{html.escape(series)} chapter {display} page {page}">')
+                    # Kiryuu pages live on the CDN; the fixture serves them from
+                    # loopback, which ExtractImageURLs accepts for tests.
+                    images.append(f'<img src="{self.base_url}{path}" width="{WIDTH}" '
+                                  f'height="{HEIGHT}" alt="{html.escape(series)} chapter '
+                                  f'{display} page {page}">')
                     if chapter in {f"{number:03d}" for number in done}:
                         local = series_dir / f"chapter-{chapter}"
                         local.mkdir(exist_ok=True)
                         (local / f"{page:03d}.png").write_bytes(data)
-                self._routes[chapter_path] = self._html(series, "\n".join(images))
+                self._chapter_json[str(chapter_id)] = ("application/json", json.dumps({
+                    "id": chapter_id,
+                    "slug": slug,
+                    "title": f"{series} chapter {display}",
+                    "number": display,
+                    "url": chapter_url,
+                    "content": "\n".join(images),
+                    "parent_id": series_index,
+                }).encode())
+                anchors.append(f'<a href="/manga/{series}/{slug}/">Chapter {display}</a>')
+            self._chapter_ids[series] = ids
             # The upstream series contains a decoy cover and reversed anchors,
             # just as a real latest-first chapter listing does.
             cover_path = self.image_path(series, "001", 1)
@@ -239,6 +253,15 @@ class ReaderFixture:
         self._routes["/"] = self._html("Reader fixture", "\n".join(
             f'<a href="/manga/{series}/">{series}</a>' for series in CHAPTERS))
 
+    @staticmethod
+    def chapter_display(raw: str) -> str:
+        return f"{float(raw.replace('-', '.')):g}"
+
+    def chapter_id(self, series: str, raw: str) -> int:
+        return self._chapter_ids[series][raw]
+
+    def chapter_url(self, series: str, raw: str) -> str:
+        return f"{self.base_url}/manga/{series}/chapter-{self.chapter_display(raw)}.{self.chapter_id(series, raw)}/"
     @staticmethod
     def _html(title: str, content: str) -> tuple[str, bytes]:
         return ("text/html; charset=utf-8",
@@ -252,10 +275,10 @@ class ReaderFixture:
                 "root": str(self.root), "home": str(self.home), "library": str(self.library),
                 "config": str(config), "configPaths": [str(path) for path in self.config_paths],
                 "environment": self.environment, "baseURL": self.base_url,
-                "seriesURL": f"{self.base_url}/manga/reader-fixture/",
+                "chapters": CHAPTERS, "chapterIDs": self._chapter_ids,
                 "secondSeriesURL": f"{self.base_url}/manga/reader-second/",
                 "statusURL": f"{self.base_url}/__fixture/status",
-                "chapters": CHAPTERS, "options": vars(self.options)}
+                "options": vars(self.options)}
 
     def status(self) -> dict:
         with self._lock:
@@ -288,7 +311,8 @@ class ReaderFixture:
                     return False  # Expected when the real reader cancels a request.
 
             def do_GET(self) -> None:
-                path = urlsplit(self.path).path
+                parsed = urlsplit(self.path)
+                path = parsed.path
                 if path == "/__fixture/status":
                     # Polling status never consumes failures or changes counters.
                     self._send(200, "application/json", json.dumps(fixture.status()).encode())
@@ -304,6 +328,14 @@ class ReaderFixture:
                     return
                 if fail:
                     self._send(503, "text/plain", b"Deterministic page 3 failure\n")
+                    return
+                if path == "/wp-json/kiru/v1/chapter":
+                    chapter_id = (parse_qs(parsed.query).get("id") or [""])[0]
+                    resource = fixture._chapter_json.get(chapter_id)
+                    if resource is None:
+                        self._send(404, "text/plain", b"Unknown fixture route\n")
+                        return
+                    self._send(200, *resource)
                     return
                 resource = fixture._routes.get(path)
                 if resource is None:

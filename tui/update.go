@@ -10,32 +10,32 @@ import (
 	tea "github.com/charmbracelet/bubbletea"
 
 	"github.com/bangadam/komiku-cli/cli"
-	"github.com/bangadam/komiku-cli/komiku"
+	"github.com/bangadam/komiku-cli/kiryuu"
 )
 
 type searchMsg struct {
 	id      uint64
-	results []komiku.Series
+	results []kiryuu.Series
 	err     error
 }
 
 type discoverMsg struct {
 	id        uint64
 	seriesURL string
-	chapters  []komiku.Chapter
+	chapters  []kiryuu.Chapter
 	err       error
 }
 
 type volumeSelectionMsg struct {
 	id         uint64
-	volumes    []komiku.Volume
+	volumes    []kiryuu.Volume
 	jobs       []cli.Job
 	provenance string
 	err        error
 }
 type wikipediaVolumesMsg struct {
 	id      uint64
-	volumes []komiku.Volume
+	volumes []kiryuu.Volume
 	err     error
 }
 
@@ -159,7 +159,7 @@ func (m model) Update(message tea.Msg) (tea.Model, tea.Cmd) {
 			m.groupEmpty = true
 			return m, nil
 		}
-		m.groupMappings = append([]komiku.Volume(nil), msg.volumes...)
+		m.groupMappings = append([]kiryuu.Volume(nil), msg.volumes...)
 		m.groupLoaded = true
 		m.groupView = true
 		m.focusGroupedChapter(m.chapterCursor)

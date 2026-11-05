@@ -1,18 +1,17 @@
-package komiku
+package kiryuu
 
 import (
 	"bufio"
 	"bytes"
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
-	"html"
 	"io"
 	"net"
 	"net/http"
 	"net/url"
 	"path"
-	"regexp"
 	"strings"
 	"sync"
 	"time"
@@ -20,11 +19,15 @@ import (
 
 const DefaultUserAgent = "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0 Safari/537.36"
 
-var legacyHostPattern = regexp.MustCompile(`^image[0-9]+\.komiku\.to$`)
+// DefaultBaseURL points at the current Kiryuu reader domain. Kiryuu rotates
+// numbered hosts (v1, v2, …), so keep this a single constant that a future
+// config override can replace.
+const DefaultBaseURL = "https://v7.kiryuu.to/"
 
 // cloudflareChallengeMarkers identify the interstitial Cloudflare serves when
-// it refuses a non-browser client. The Cf-Mitigated header is authoritative;
-// these markers cover responses where the header is stripped.
+// it refuses a non-browser client. Kiryuu serves plain responses today, but it
+// sits behind Cloudflare, so detection stays armed. The Cf-Mitigated header is
+// authoritative; these markers cover responses where the header is stripped.
 var cloudflareChallengeMarkers = [][]byte{
 	[]byte("Just a moment"),
 	[]byte("Tunggu sebentar"),
@@ -178,7 +181,7 @@ const fetchHTMLRetries = 2
 
 func (c *Client) fetchHTML(ctx context.Context, target string) ([]byte, error) {
 	var lastErr error
-	for attempt := 0; attempt <= fetchHTMLRetries; attempt++ {
+	for attempt := range fetchHTMLRetries + 1 {
 		if attempt > 0 {
 			if err := c.sleep()(ctx, time.Duration(attempt)*500*time.Millisecond); err != nil {
 				return nil, err
@@ -210,7 +213,7 @@ func (c *Client) fetchHTML(ctx context.Context, target string) ([]byte, error) {
 // callers can distinguish missing pages (404) from other failures. A
 // Cloudflare challenge is solved once and retried with the resulting session.
 func (c *Client) fetchPage(ctx context.Context, target string) ([]byte, int, string, error) {
-	data, status, statusText, headers, err := c.doPage(ctx, target)
+	data, status, statusText, headers, err := c.doRequest(ctx, http.MethodGet, target, nil, nil)
 	if err != nil {
 		return nil, 0, "", err
 	}
@@ -227,19 +230,97 @@ func (c *Client) fetchPage(ctx context.Context, target string) ([]byte, int, str
 		}
 	}
 	c.storeSession(session)
-	data, status, statusText, _, err = c.doPage(ctx, target)
+	data, status, statusText, _, err = c.doRequest(ctx, http.MethodGet, target, nil, nil)
 	if err != nil {
 		return nil, 0, "", err
 	}
 	return data, status, statusText, nil
 }
 
-func (c *Client) doPage(ctx context.Context, target string) ([]byte, int, string, http.Header, error) {
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, target, nil)
+// fetchPost form-POSTs to an admin-ajax endpoint and returns the body with the
+// HTTP status. Challenge solving mirrors fetchPage because the AJAX endpoint
+// lives on the same Cloudflare-fronted host.
+func (c *Client) fetchPost(ctx context.Context, target string, form url.Values) ([]byte, int, string, error) {
+	body := form.Encode()
+	data, status, statusText, headers, err := c.doRequest(ctx, http.MethodPost, target, strings.NewReader(body), func(req *http.Request) {
+		req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	})
+	if err != nil {
+		return nil, 0, "", err
+	}
+	if status != http.StatusForbidden || c.Solver == nil || !isCloudflareChallenge(headers, data) {
+		return data, status, statusText, nil
+	}
+	session, err := c.Solver(ctx, target)
+	if err != nil {
+		return nil, 0, "", fmt.Errorf("POST %s: cloudflare challenge not solved: %w", target, err)
+	}
+	if session.Host == "" {
+		if parsed, parseErr := url.Parse(target); parseErr == nil {
+			session.Host = parsed.Hostname()
+		}
+	}
+	c.storeSession(session)
+	data, status, statusText, _, err = c.doRequest(ctx, http.MethodPost, target, strings.NewReader(body), func(req *http.Request) {
+		req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	})
+	if err != nil {
+		return nil, 0, "", err
+	}
+	return data, status, statusText, nil
+}
+
+// fetchJSON GETs a REST endpoint and decodes the JSON body into out.
+func (c *Client) fetchJSON(ctx context.Context, target string, out any) error {
+	data, err := c.fetchHTML(ctx, target)
+	if err != nil {
+		return err
+	}
+	if err := json.Unmarshal(data, out); err != nil {
+		return fmt.Errorf("GET %s: invalid JSON response: %w", target, err)
+	}
+	return nil
+}
+
+// apiURL resolves a REST path (for example /wp-json/kiru/v1/manga?slug=x)
+// against the configured base URL. Query strings in the path are preserved.
+func (c *Client) apiURL(path string) (string, error) {
+	return c.resolveURL(path)
+}
+
+// ajaxURL builds an admin-ajax endpoint URL with the named action.
+func (c *Client) ajaxURL(action string) (string, error) {
+	return c.resolveURL("/wp-admin/admin-ajax.php?action=" + url.QueryEscape(action))
+}
+
+func (c *Client) resolveURL(path string) (string, error) {
+	baseURL := c.BaseURL
+	if baseURL == "" {
+		baseURL = DefaultBaseURL
+	}
+	base, err := url.Parse(baseURL)
+	if err != nil || base.Scheme == "" || base.Host == "" {
+		return "", fmt.Errorf("invalid base URL %q", baseURL)
+	}
+	arg, err := url.Parse(path)
+	if err != nil {
+		return "", fmt.Errorf("invalid path %q: %w", path, err)
+	}
+	target := *base
+	target.Path = strings.TrimSuffix(base.Path, "/") + arg.Path
+	target.RawQuery = arg.RawQuery
+	return target.String(), nil
+}
+
+func (c *Client) doRequest(ctx context.Context, method, target string, body io.Reader, prepare func(*http.Request)) ([]byte, int, string, http.Header, error) {
+	req, err := http.NewRequestWithContext(ctx, method, target, body)
 	if err != nil {
 		return nil, 0, "", nil, err
 	}
 	req.Header.Set("User-Agent", c.userAgent())
+	if prepare != nil {
+		prepare(req)
+	}
 	if session := c.session(); session != nil && session.Cookie != "" && sessionMatchesHost(session.Host, target) {
 		req.Header.Set("Cookie", session.Cookie)
 	}
@@ -249,15 +330,24 @@ func (c *Client) doPage(ctx context.Context, target string) ([]byte, int, string
 	}
 	defer resp.Body.Close()
 	statusText := resp.Status
-	const maxHTML = 16 << 20
-	data, err := io.ReadAll(io.LimitReader(resp.Body, maxHTML+1))
+	const maxBody = 16 << 20
+	data, err := io.ReadAll(io.LimitReader(resp.Body, maxBody+1))
 	if err != nil {
 		return nil, resp.StatusCode, statusText, resp.Header, err
 	}
-	if len(data) > maxHTML {
-		return nil, resp.StatusCode, statusText, resp.Header, fmt.Errorf("GET %s: HTML exceeds %d bytes", target, maxHTML)
+	if len(data) > maxBody {
+		return nil, resp.StatusCode, statusText, resp.Header, fmt.Errorf("%s %s: response exceeds %d bytes", method, target, maxBody)
 	}
 	return data, resp.StatusCode, statusText, resp.Header, nil
+}
+
+// isTransportError reports whether the error chain contains a network-layer
+// failure. A connection reset while streaming an image body surfaces through
+// the save callback, but it is a fetch failure, not a disk failure, so
+// DownloadImage must still retry it.
+func isTransportError(err error) bool {
+	var netErr net.Error
+	return errors.As(err, &netErr)
 }
 
 func isCloudflareChallenge(headers http.Header, body []byte) bool {
@@ -281,14 +371,6 @@ func sessionMatchesHost(host, target string) bool {
 		return false
 	}
 	return strings.EqualFold(parsed.Hostname(), host)
-}
-
-func (c *Client) ChapterImages(ctx context.Context, chapterURL string) ([]string, error) {
-	data, err := c.fetchHTML(ctx, chapterURL)
-	if err != nil {
-		return nil, err
-	}
-	return ExtractImageURLs(data), nil
 }
 
 type ImageFormat string
@@ -324,60 +406,25 @@ func ImageExtension(rawURL string, format ImageFormat) string {
 	return "." + string(format)
 }
 
-func EncodeImageURL(rawURL string) (string, error) {
-	u, err := url.Parse(strings.TrimSpace(html.UnescapeString(rawURL)))
-	if err != nil {
-		return "", err
-	}
-	if u.Scheme != "http" && u.Scheme != "https" {
-		return "", fmt.Errorf("unsupported image URL scheme %q", u.Scheme)
-	}
-	segments := strings.Split(u.Path, "/")
-	for i := range segments {
-		segments[i] = url.PathEscape(segments[i])
-	}
-	u.RawPath = strings.Join(segments, "/")
-	return u.String(), nil
-}
-
-func RewriteLegacyURL(encodedURL string) (string, bool) {
-	u, err := url.Parse(encodedURL)
-	if err != nil || u.Scheme != "https" || !legacyHostPattern.MatchString(strings.ToLower(u.Hostname())) {
-		return encodedURL, false
-	}
-	u.Host = "img.komiku.org"
-	return u.String(), true
-}
-
 type SaveImageFunc func(extension string, body io.Reader) error
 
 var errSaveImage = errors.New("save image")
 
-func (c *Client) DownloadImage(ctx context.Context, rawURL, chapterURL string, save SaveImageFunc) error {
-	encoded, err := EncodeImageURL(rawURL)
-	if err != nil {
-		return err
-	}
-	fallback, hasFallback := RewriteLegacyURL(encoded)
+// DownloadImage fetches one chapter page. The Kiryuu image CDN serves pages
+// without hotlink protection, so no referer is sent. A transport failure
+// while streaming the body (connection resets under load) is retried: the
+// save callback stages pages atomically, so a retry cannot leave a partial
+// file behind. A save failure without a transport cause is not retried.
+func (c *Client) DownloadImage(ctx context.Context, rawURL string, save SaveImageFunc) error {
 	backoff := [...]time.Duration{time.Second, 2 * time.Second, 4 * time.Second}
 	var lastErr error
-	for attempt := 0; attempt < 4; attempt++ {
-		if err := c.fetchImage(ctx, encoded, chapterURL, save); err == nil {
+	for attempt := range 4 {
+		if err := c.fetchImage(ctx, rawURL, save); err == nil {
 			return nil
 		} else {
 			lastErr = err
-			if errors.Is(err, errSaveImage) {
+			if errors.Is(err, errSaveImage) && !isTransportError(err) {
 				return err
-			}
-		}
-		if hasFallback {
-			if err := c.fetchImage(ctx, fallback, chapterURL, save); err == nil {
-				return nil
-			} else {
-				lastErr = err
-				if errors.Is(err, errSaveImage) {
-					return err
-				}
 			}
 		}
 		if attempt < len(backoff) {
@@ -386,10 +433,10 @@ func (c *Client) DownloadImage(ctx context.Context, rawURL, chapterURL string, s
 			}
 		}
 	}
-	return fmt.Errorf("image %s failed after 4 attempts: %w", encoded, lastErr)
+	return fmt.Errorf("image %s failed after 4 attempts: %w", rawURL, lastErr)
 }
 
-func (c *Client) fetchImage(ctx context.Context, target, referer string, save SaveImageFunc) error {
+func (c *Client) fetchImage(ctx context.Context, target string, save SaveImageFunc) error {
 	if c.Limiter != nil {
 		if err := c.Limiter.Wait(ctx); err != nil {
 			return err
@@ -400,7 +447,6 @@ func (c *Client) fetchImage(ctx context.Context, target, referer string, save Sa
 		return err
 	}
 	req.Header.Set("User-Agent", c.userAgent())
-	req.Header.Set("Referer", referer)
 	if session := c.session(); session != nil && session.Cookie != "" && sessionMatchesHost(session.Host, target) {
 		req.Header.Set("Cookie", session.Cookie)
 	}
@@ -421,7 +467,7 @@ func (c *Client) fetchImage(ctx context.Context, target, referer string, save Sa
 		return fmt.Errorf("GET %s: invalid image payload", target)
 	}
 	if err := save(ImageExtension(target, format), reader); err != nil {
-		return fmt.Errorf("%w: %v", errSaveImage, err)
+		return fmt.Errorf("%w: %w", errSaveImage, err)
 	}
 	return nil
 }

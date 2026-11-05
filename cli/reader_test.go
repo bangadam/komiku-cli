@@ -13,10 +13,11 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"testing"
 
-	"github.com/bangadam/komiku-cli/komiku"
+	"github.com/bangadam/komiku-cli/kiryuu"
 )
 
 func writePageFile(t *testing.T, dir, name string, size int) {
@@ -103,7 +104,7 @@ func TestLocalChaptersOrdersFlatAndVolumeDirs(t *testing.T) {
 }
 
 func TestSelectReaderChapterSupportsSelectors(t *testing.T) {
-	chapters := []komiku.Chapter{
+	chapters := []kiryuu.Chapter{
 		{Display: "1", Number: 1, URL: "u1"},
 		{Display: "79.2", Number: 79.2, URL: "u2"},
 		{Display: "180", Number: 180, URL: "u3"},
@@ -153,8 +154,42 @@ type readerTestFixture struct {
 	rawIDs       []string
 	counts       map[string]int
 	requests     map[string]int
+	chapterHits  map[string]int
 	beforeImage  func(*http.Request)
 	imageBody    func(*http.Request) io.ReadCloser
+}
+
+// readerTestOrigin is the canonical Kiryuu host the fixture chapter URLs
+// advertise. The transport never leaves memory, so only the path matters.
+const readerTestOrigin = "https://v7.kiryuu.to/"
+
+// readerTestChapterID reports the numeric post ID for a fixture chapter token.
+func readerTestChapterID(raw string) string {
+	id, err := strconv.Atoi(strings.NewReplacer("-", "", ".", "").Replace(raw))
+	if err != nil {
+		return "0"
+	}
+	return strconv.Itoa(id)
+}
+
+// readerTestChapterNumber maps a slug token to its chapter number: "003" is
+// chapter 3, while "79-2" and "79-20" both describe chapter 79.2.
+func readerTestChapterNumber(raw string) string {
+	number, err := strconv.ParseFloat(strings.ReplaceAll(raw, "-", "."), 64)
+	if err != nil {
+		return "0"
+	}
+	return strconv.FormatFloat(number, 'f', -1, 64)
+}
+
+// rawForID maps a chapter post ID back to the fixture token that produced it.
+func (f *readerTestFixture) rawForID(id string) string {
+	for _, raw := range f.rawIDs {
+		if readerTestChapterID(raw) == id {
+			return raw
+		}
+	}
+	return id
 }
 
 func newReaderTestFixture(t *testing.T) *readerTestFixture {
@@ -164,24 +199,39 @@ func newReaderTestFixture(t *testing.T) *readerTestFixture {
 	if err := os.WriteFile(config, []byte(`{"image_delay":"0s"}`), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	f := &readerTestFixture{root: root, image: readerTestPNG(t), rawIDs: []string{"001", "002", "003", "004", "79-2"}, counts: map[string]int{"003": 5}, requests: map[string]int{}}
+	f := &readerTestFixture{
+		root:        root,
+		image:       readerTestPNG(t),
+		rawIDs:      []string{"001", "002", "003", "004", "79-2"},
+		counts:      map[string]int{"003": 5},
+		requests:    map[string]int{},
+		chapterHits: map[string]int{},
+	}
 	f.dependencies = Dependencies{ConfigPath: config, HTTP: &http.Client{Transport: readerTestTransport(func(r *http.Request) (*http.Response, error) {
 		f.requests[r.URL.Path]++
-		var content string
+		reply := func(content string) (*http.Response, error) {
+			return &http.Response{StatusCode: 200, Status: "200 OK", Header: make(http.Header), Body: io.NopCloser(strings.NewReader(content)), Request: r}, nil
+		}
 		switch {
 		case r.URL.Path == "/manga/fixture/":
+			chapters := make([]kiryuuChapterFixture, 0, len(f.rawIDs))
 			for _, raw := range f.rawIDs {
-				content += fmt.Sprintf(`<a href="/fixture-chapter-%s/"></a>`, raw)
+				chapters = append(chapters, kiryuuChapterFixture{ID: readerTestChapterID(raw), Number: readerTestChapterNumber(raw)})
 			}
-		case strings.HasPrefix(r.URL.Path, "/fixture-chapter-"):
-			raw := strings.TrimSuffix(strings.TrimPrefix(r.URL.Path, "/fixture-chapter-"), "/")
+			return reply(kiryuuSeriesPage(readerTestOrigin, "fixture", chapters))
+		case r.URL.Path == "/wp-json/kiru/v1/chapter":
+			id := r.URL.Query().Get("id")
+			f.chapterHits[id]++
+			raw := f.rawForID(id)
 			count, exists := f.counts[raw]
 			if !exists {
 				count = 2
 			}
+			content := ""
 			for i := 1; i <= count; i++ {
-				content += fmt.Sprintf(`<img class="klazy" src="https://komiku.org/images/%s/%d.png">`, raw, i)
+				content += fmt.Sprintf(`<img src="https://cdn.kiryuu.io/images/%s/%d.png">`, raw, i)
 			}
+			return reply(kiryuuChapterObjectJSON("fixture", id, readerTestChapterNumber(raw), readerTestOrigin, content))
 		case strings.HasPrefix(r.URL.Path, "/images/"):
 			if f.beforeImage != nil {
 				f.beforeImage(r)
@@ -195,7 +245,6 @@ func newReaderTestFixture(t *testing.T) *readerTestFixture {
 			t.Errorf("unexpected request: %s", r.URL)
 			return nil, errors.New("unexpected fixture URL")
 		}
-		return &http.Response{StatusCode: 200, Status: "200 OK", Header: make(http.Header), Body: io.NopCloser(strings.NewReader(content)), Request: r}, nil
 	})}}
 	return f
 }
@@ -204,7 +253,7 @@ func (f *readerTestFixture) run(ctx context.Context, writer io.Writer, args ...s
 	cmd := NewReadCommand(f.dependencies)
 	cmd.SetOut(writer)
 	cmd.SetErr(io.Discard)
-	cmd.SetArgs(append([]string{"https://komiku.org/manga/fixture/", "--out", f.root, "--json", "--ch", "3"}, args...))
+	cmd.SetArgs(append([]string{"https://v7.kiryuu.to/manga/fixture/", "--out", f.root, "--json", "--ch", "3"}, args...))
 	cmd.SilenceErrors, cmd.SilenceUsage = true, true
 	return cmd.ExecuteContext(ctx)
 }
@@ -297,7 +346,7 @@ func TestReaderProgressBeforeDownloadsAndFinalCacheHit(t *testing.T) {
 	if len(reports) != 2 || len(events) != 2 || reports[0].Bytes != final.Bytes || reports[1].Bytes != final.Bytes {
 		t.Fatalf("cache hit did not emit initial/final state: %s", out.String())
 	}
-	if f.requests["/fixture-chapter-003/"] != 1 {
+	if f.chapterHits["3"] != 1 {
 		t.Fatalf("valid manifest refetched page list: %+v", f.requests)
 	}
 }
@@ -405,11 +454,11 @@ func TestReaderInterruptedCacheAndCancellation(t *testing.T) {
 	}
 	f.beforeImage = func(r *http.Request) { t.Fatalf("offline requested %s", r.URL) }
 	var offline bytes.Buffer
-	before := f.requests["/manga/fixture/"]
+	before := f.requests["/wp-json/kiru/v1/manga"]
 	if err := f.run(context.Background(), &offline, "--offline"); err != nil {
 		t.Fatal(err)
 	}
-	if f.requests["/manga/fixture/"] != before {
+	if f.requests["/wp-json/kiru/v1/manga"] != before {
 		t.Fatal("offline fetched discovery")
 	}
 	report := readerTestJSON(t, offline.Bytes())
@@ -463,7 +512,7 @@ func TestReaderLibraryGapsDuplicatesAndCorruptImages(t *testing.T) {
 func TestReaderFractionalRawIdentityAndAmbiguousSelection(t *testing.T) {
 	f := newReaderTestFixture(t)
 	f.rawIDs = []string{"79-02", "79-2", "79-20"}
-	for _, raw := range []string{"79-2", "79-20"} {
+	for _, raw := range []string{"792", "7920"} {
 		var out bytes.Buffer
 		if err := f.run(context.Background(), &out, "--ch", raw); err != nil {
 			t.Fatal(err)
@@ -477,11 +526,11 @@ func TestReaderFractionalRawIdentityAndAmbiguousSelection(t *testing.T) {
 	if err := f.run(context.Background(), &out, "--ch", "79.2"); err == nil || !strings.Contains(err.Error(), "ambiguous") {
 		t.Fatalf("ambiguous fractional number accepted: %v", err)
 	}
-	if err := f.run(context.Background(), &out, "--ch", "79-20", "--offline"); err != nil {
+	if err := f.run(context.Background(), &out, "--ch", "7920", "--offline"); err != nil {
 		t.Fatal(err)
 	}
 	report := readerTestJSON(t, out.Bytes())
-	if !strings.HasSuffix(report.Chapter.URL, "-79-20/") || report.Total != 3 || len(report.Chapters) != 3 {
+	if !strings.HasSuffix(report.Chapter.URL, "/manga/fixture/chapter-79.2.7920/") || report.Total != 3 || len(report.Chapters) != 3 {
 		t.Fatalf("offline raw identity lost: %+v", report)
 	}
 	for _, selector := range []string{"first", "latest", "1", "NaN", "../1"} {
@@ -758,45 +807,49 @@ func TestReaderLegacyPartialCacheNeedsRealExpectedList(t *testing.T) {
 
 func TestReaderDistinctURLsWithSameRawIDDoNotAlias(t *testing.T) {
 	f := newReaderTestFixture(t)
-	f.rawIDs = []string{"003", "003"}
+	// Two spellings of the same chapter number and post ID resolve to distinct
+	// URLs, so their reader caches must stay separate.
 	transport := f.dependencies.HTTP.Transport
 	f.dependencies.HTTP = &http.Client{Transport: readerTestTransport(func(r *http.Request) (*http.Response, error) {
-		if r.URL.Path == "/manga/fixture/" {
-			return &http.Response{StatusCode: 200, Status: "200 OK", Header: make(http.Header), Body: io.NopCloser(strings.NewReader(`<a href="/fixture-chapter-003/"></a><a href="/other-chapter-003/"></a>`)), Request: r}, nil
+		reply := func(content string) (*http.Response, error) {
+			return &http.Response{StatusCode: 200, Status: "200 OK", Header: make(http.Header), Body: io.NopCloser(strings.NewReader(content)), Request: r}, nil
 		}
-		if r.URL.Path == "/other-chapter-003/" {
-			return &http.Response{StatusCode: 200, Status: "200 OK", Header: make(http.Header), Body: io.NopCloser(strings.NewReader(`<img class="klazy" src="https://komiku.org/images/other/1.png">`)), Request: r}, nil
+		if r.URL.Path == "/manga/fixture/" {
+			return reply(kiryuuSeriesPage(readerTestOrigin, "fixture", []kiryuuChapterFixture{
+				{ID: "3", Number: "3"},
+				{ID: "3", Number: "3-0"},
+			}))
 		}
 		return transport.RoundTrip(r)
 	})}
-	writePageFile(t, filepath.Join(f.root, "fixture", "chapter-003-raw-003"), "001.png", 0)
+	writePageFile(t, filepath.Join(f.root, "fixture", "chapter-003-raw-3"), "001.png", 0)
 	var out bytes.Buffer
-	if err := f.run(context.Background(), &out, "--ch", "003"); err == nil || !strings.Contains(err.Error(), "ambiguous") {
+	if err := f.run(context.Background(), &out, "--ch", "3"); err == nil || !strings.Contains(err.Error(), "ambiguous") {
 		t.Fatalf("duplicate raw selector accepted: %v", err)
 	}
-	if err := f.run(context.Background(), &out, "--ch", "https://komiku.org/fixture-chapter-003/"); err != nil {
+	if err := f.run(context.Background(), &out, "--ch", "https://v7.kiryuu.to/manga/fixture/chapter-3.3/"); err != nil {
 		t.Fatal(err)
 	}
 	first := readerTestJSON(t, out.Bytes())
 	out.Reset()
-	if err := f.run(context.Background(), &out, "--ch", "https://komiku.org/other-chapter-003/"); err != nil {
+	if err := f.run(context.Background(), &out, "--ch", "https://v7.kiryuu.to/manga/fixture/chapter-3-0.3/"); err != nil {
 		t.Fatal(err)
 	}
 	second := readerTestJSON(t, out.Bytes())
-	if first.CacheDir == second.CacheDir || second.PageCount != 1 || first.PageCount != 5 || f.requests["/images/003/1.png"] != 1 || f.requests["/images/other/1.png"] != 1 {
+	if first.CacheDir == second.CacheDir || second.PageCount != 5 || first.PageCount != 5 || f.requests["/images/003/2.png"] != 2 {
 		t.Fatalf("distinct URLs shared bytes: first=%+v second=%+v", first, second)
 	}
 }
 
 func TestReaderOfflineRawFoldersAndPageIndexBounds(t *testing.T) {
 	f := newReaderTestFixture(t)
-	writePageFile(t, filepath.Join(f.root, "fixture", "chapter-079.2-raw-79-2"), "001.png", 0)
-	writePageFile(t, filepath.Join(f.root, "fixture", "vol-01", "chapter-079.2-raw-79-20"), "002.png", 0)
+	writePageFile(t, filepath.Join(f.root, "fixture", "chapter-079.2-raw-792"), "001.png", 0)
+	writePageFile(t, filepath.Join(f.root, "fixture", "vol-01", "chapter-079.2-raw-7920"), "002.png", 0)
 	var out bytes.Buffer
 	if err := f.run(context.Background(), &out, "--offline", "--ch", "79.2"); err == nil || !strings.Contains(err.Error(), "ambiguous") {
 		t.Fatalf("offline raw folders merged: %v", err)
 	}
-	if err := f.run(context.Background(), &out, "--offline", "--ch", "79-20"); err != nil {
+	if err := f.run(context.Background(), &out, "--offline", "--ch", "7920"); err != nil {
 		t.Fatal(err)
 	}
 	report := readerTestJSON(t, out.Bytes())
@@ -813,7 +866,7 @@ func TestReaderUnsafeSeriesAndOnlineCachePaths(t *testing.T) {
 	f := newReaderTestFixture(t)
 	for _, slug := range []string{"..", "%2e%2e", "foo%5cbar", "foo%00bar", "foo%2fbar"} {
 		cmd := NewReadCommand(f.dependencies)
-		cmd.SetArgs([]string{"https://komiku.org/manga/" + slug + "/", "--out", f.root, "--offline", "--json"})
+		cmd.SetArgs([]string{"https://v7.kiryuu.to/manga/" + slug + "/", "--out", f.root, "--offline", "--json"})
 		cmd.SetOut(io.Discard)
 		cmd.SetErr(io.Discard)
 		if err := cmd.ExecuteContext(context.Background()); err == nil {

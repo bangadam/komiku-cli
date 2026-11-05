@@ -54,7 +54,7 @@ function isPreset(value: string | undefined): value is Preset {
 }
 
 function seriesUrl(slug: string): string {
-  return `https://komiku.org/manga/${slug}/`
+  return `https://v7.kiryuu.to/manga/${slug}/`
 }
 
 function errorMessage(error: unknown): string {

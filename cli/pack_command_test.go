@@ -13,7 +13,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/bangadam/komiku-cli/komiku"
+	"github.com/bangadam/komiku-cli/kiryuu"
 	"github.com/bangadam/komiku-cli/store"
 )
 
@@ -33,9 +33,9 @@ func TestStandalonePackUsesManifestOfflineAfterProcessRestart(t *testing.T) {
 			t.Fatal(err)
 		}
 		before[filename] = data
-		sources = append(sources, PackChapterSource{Chapter: komiku.Chapter{Display: fmt.Sprint(number), Number: float64(number)}, Volume: 1, Dir: relative, ExpectedPages: 1, Complete: true})
+		sources = append(sources, PackChapterSource{Chapter: kiryuu.Chapter{Display: fmt.Sprint(number), Number: float64(number)}, Volume: 1, Dir: relative, ExpectedPages: 1, Complete: true})
 	}
-	if err := RecordRecoveredPackManifest(seriesDir, "offline-series", []komiku.Volume{{Volume: 1, Start: 1, End: 2}}, sources); err != nil {
+	if err := RecordRecoveredPackManifest(seriesDir, "offline-series", []kiryuu.Volume{{Volume: 1, Start: 1, End: 2}}, sources); err != nil {
 		t.Fatal(err)
 	}
 
@@ -76,8 +76,8 @@ func TestStandaloneManifestPackRejectsInvalidMagicBeforeArchiveCreation(t *testi
 	seriesDir := filepath.Join(t.TempDir(), "invalid-series")
 	sourceDir := filepath.Join(seriesDir, "chapter-001")
 	writeManifestTestImage(t, sourceDir, "001.jpg")
-	source := PackChapterSource{Chapter: komiku.Chapter{Display: "1", Number: 1}, Volume: 1, Dir: "chapter-001", ExpectedPages: 1, Complete: true}
-	if err := RecordRecoveredPackManifest(seriesDir, "invalid-series", []komiku.Volume{{Volume: 1, Start: 1, End: 1}}, []PackChapterSource{source}); err != nil {
+	source := PackChapterSource{Chapter: kiryuu.Chapter{Display: "1", Number: 1}, Volume: 1, Dir: "chapter-001", ExpectedPages: 1, Complete: true}
+	if err := RecordRecoveredPackManifest(seriesDir, "invalid-series", []kiryuu.Volume{{Volume: 1, Start: 1, End: 1}}, []PackChapterSource{source}); err != nil {
 		t.Fatal(err)
 	}
 	if err := os.WriteFile(filepath.Join(sourceDir, "001.jpg"), []byte("not an image"), 0o644); err != nil {

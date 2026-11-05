@@ -13,7 +13,7 @@ import (
 	"github.com/spf13/cobra"
 	"github.com/spf13/pflag"
 
-	"github.com/bangadam/komiku-cli/komiku"
+	"github.com/bangadam/komiku-cli/kiryuu"
 	"github.com/bangadam/komiku-cli/store"
 )
 
@@ -82,7 +82,7 @@ func NewReadCommand(dependencies Dependencies) *cobra.Command {
 }
 
 func runRead(ctx context.Context, seriesURL string, flags *pflag.FlagSet, stdout io.Writer, dependencies Dependencies) (resultErr error) {
-	parsed, err := komiku.ValidateSeriesURL(seriesURL)
+	parsed, err := kiryuu.ValidateSeriesURL(seriesURL)
 	if err != nil {
 		return err
 	}
@@ -122,8 +122,8 @@ func runRead(ctx context.Context, seriesURL string, flags *pflag.FlagSet, stdout
 	if err != nil {
 		return err
 	}
-	client := dependencies.newKomikuClient(config.ImageDelay)
-	var chapters []komiku.Chapter
+	client := dependencies.newKiryuuClient(config.ImageDelay)
+	var chapters []kiryuu.Chapter
 	var manifests map[string]readerManifest
 	if offline {
 		chapters, manifests, err = fs.offlineMetadata(seriesURL)
@@ -339,7 +339,7 @@ func runRead(ctx context.Context, seriesURL string, flags *pflag.FlagSet, stdout
 			saveErr = save(filepath.Ext(page.Local), file)
 			file.Close()
 		} else {
-			saveErr = client.DownloadImage(ctx, page.URL, chapter.URL, save)
+			saveErr = client.DownloadImage(ctx, page.URL, save)
 		}
 		if saveErr != nil {
 			if ctx.Err() != nil {
@@ -371,7 +371,7 @@ func runRead(ctx context.Context, seriesURL string, flags *pflag.FlagSet, stdout
 	return ctx.Err()
 }
 
-func readerChapter(ch komiku.Chapter) ReaderChapter {
+func readerChapter(ch kiryuu.Chapter) ReaderChapter {
 	return ReaderChapter{Display: ch.Display, Number: ch.Number, URL: ch.URL}
 }
 
@@ -439,7 +439,7 @@ func emitReaderReport(stdout io.Writer, report ReaderReport, asJSON bool) error 
 	return nil
 }
 
-func selectReaderChapter(chapters []komiku.Chapter, selector string) (int, error) {
+func selectReaderChapter(chapters []kiryuu.Chapter, selector string) (int, error) {
 	if len(chapters) == 0 {
 		return 0, errors.New("no chapters are available in discovery or local reader metadata")
 	}

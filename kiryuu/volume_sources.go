@@ -1,5 +1,5 @@
 // volume_sources.go selects and orders the providers that supply chapter-to-volume mappings.
-package komiku
+package kiryuu
 
 import (
 	"context"

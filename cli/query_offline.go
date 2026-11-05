@@ -7,7 +7,7 @@ import (
 	"path/filepath"
 	"sort"
 
-	"github.com/bangadam/komiku-cli/komiku"
+	"github.com/bangadam/komiku-cli/kiryuu"
 )
 
 // localSeriesInfo builds a series report from disk alone. The GUI shows this
@@ -88,8 +88,8 @@ func readDoneIfPresent(seriesDir string) (map[float64]bool, bool, error) {
 // localVolumeMapping reads the mapping from disk and never goes online. The
 // provider cache comes first because it holds the whole series mapping, while
 // a manifest only records the volumes packed so far.
-func localVolumeMapping(seriesDir string) ([]komiku.Volume, error) {
-	cache, err := komiku.DecodeVolumeCacheFile(filepath.Join(seriesDir, ".volumes.json"))
+func localVolumeMapping(seriesDir string) ([]kiryuu.Volume, error) {
+	cache, err := kiryuu.DecodeVolumeCacheFile(filepath.Join(seriesDir, ".volumes.json"))
 	if err == nil && len(cache.Volumes) > 0 {
 		return cache.Volumes, nil
 	}
@@ -99,9 +99,9 @@ func localVolumeMapping(seriesDir string) ([]komiku.Volume, error) {
 
 	manifest, err := LoadPackManifest(seriesDir)
 	if err == nil {
-		mappings := make([]komiku.Volume, 0, len(manifest.Mappings))
+		mappings := make([]kiryuu.Volume, 0, len(manifest.Mappings))
 		for _, mapping := range manifest.Mappings {
-			mappings = append(mappings, komiku.Volume{Volume: mapping.Volume, Start: mapping.Start, End: mapping.End})
+			mappings = append(mappings, kiryuu.Volume{Volume: mapping.Volume, Start: mapping.Start, End: mapping.End})
 		}
 		return mappings, nil
 	}

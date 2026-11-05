@@ -9,7 +9,7 @@ import (
 	tea "github.com/charmbracelet/bubbletea"
 
 	"github.com/bangadam/komiku-cli/cli"
-	"github.com/bangadam/komiku-cli/komiku"
+	"github.com/bangadam/komiku-cli/kiryuu"
 )
 
 func (m model) updateChapters(key tea.KeyMsg) (tea.Model, tea.Cmd) {
@@ -261,7 +261,7 @@ func (m model) applyRange() (tea.Model, tea.Cmd) {
 			m.err = fmt.Errorf("use mapping | volumes, for example 1:1-7,2:8-15 | 1-2")
 			return m, nil
 		}
-		volumes, err := cli.ParseManualVolumeMapping(strings.TrimSpace(parts[0]), komiku.MaxDiscoveredChapter(m.chapters))
+		volumes, err := cli.ParseManualVolumeMapping(strings.TrimSpace(parts[0]), kiryuu.MaxDiscoveredChapter(m.chapters))
 		if err != nil {
 			m.err = err
 			return m, nil
@@ -277,7 +277,7 @@ func (m model) applyRange() (tea.Model, tea.Cmd) {
 			m.err = err
 			return m, nil
 		}
-		maxChapter := komiku.MaxDiscoveredChapter(m.chapters)
+		maxChapter := kiryuu.MaxDiscoveredChapter(m.chapters)
 		ctx, id := m.beginOperation()
 		m.rangeLoading = true
 		cmd := func() tea.Msg {
@@ -294,21 +294,21 @@ func (m model) applyRange() (tea.Model, tea.Cmd) {
 	return m, nil
 }
 
-func selectChapterExpression(chapters []komiku.Chapter, expression string) ([]komiku.Chapter, error) {
+func selectChapterExpression(chapters []kiryuu.Chapter, expression string) ([]kiryuu.Chapter, error) {
 	if strings.EqualFold(expression, "all") {
-		return append([]komiku.Chapter(nil), chapters...), nil
+		return append([]kiryuu.Chapter(nil), chapters...), nil
 	}
 	return cli.SelectChapters(chapters, expression)
 }
 
-func (m *model) applyVolumeJobs(jobs []cli.Job, volumes []komiku.Volume) {
+func (m *model) applyVolumeJobs(jobs []cli.Job, volumes []kiryuu.Volume) {
 	m.selected = make(map[string]bool, len(jobs))
 	m.assignments = make(map[string]int, len(jobs))
 	for _, job := range jobs {
 		m.selected[job.Chapter.URL] = true
 		m.assignments[job.Chapter.URL] = job.Volume
 	}
-	m.mappings = append([]komiku.Volume(nil), volumes...)
+	m.mappings = append([]kiryuu.Volume(nil), volumes...)
 	m.flat = false
 	m.explicitFlat = false
 	m.packUnavailableReason = ""

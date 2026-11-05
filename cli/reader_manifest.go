@@ -10,20 +10,25 @@ import (
 	"net/url"
 	"os"
 	"path/filepath"
+	"regexp"
 	"strings"
 	"time"
 
-	"github.com/bangadam/komiku-cli/komiku"
+	"github.com/bangadam/komiku-cli/kiryuu"
 	"github.com/bangadam/komiku-cli/store"
 )
+
+// readerChapterPathPattern matches Kiryuu chapter links and captures the
+// trailing chapter post ID, which is the chapter's raw identity.
+var readerChapterPathPattern = regexp.MustCompile(`^/manga/[^/]+/chapter-[^/]+\.([0-9]+)/?$`)
 
 // There is deliberately no "complete" bit: completeness is revalidated against
 // every expected slot on each read. File names are leaves, never persisted paths.
 type readerManifest struct {
 	Version   int                  `json:"version"`
 	SeriesURL string               `json:"series_url"`
-	Chapter   komiku.Chapter       `json:"chapter"`
-	Chapters  []komiku.Chapter     `json:"chapters"`
+	Chapter   kiryuu.Chapter       `json:"chapter"`
+	Chapters  []kiryuu.Chapter     `json:"chapters"`
 	PageCount int                  `json:"page_count"`
 	Pages     []readerManifestPage `json:"pages"`
 }
@@ -36,7 +41,7 @@ type readerManifestPage struct {
 	SHA256 string `json:"sha256,omitempty"`
 }
 
-func readerCacheRelative(chapter komiku.Chapter) string {
+func readerCacheRelative(chapter kiryuu.Chapter) string {
 	// Raw IDs preserve fractional aliases; URL identity also separates distinct
 	// real hrefs that happen to use the same raw ID (including query variants).
 	sum := sha256.Sum256([]byte(chapter.URL))
@@ -48,28 +53,28 @@ func readerPageStem(page readerManifestPage) string {
 	return fmt.Sprintf("%03d-%x", page.Index, sum[:12])
 }
 
-func validateReaderChapters(chapters []komiku.Chapter, seriesURL string) error {
+func validateReaderChapters(chapters []kiryuu.Chapter, seriesURL string) error {
 	if len(chapters) == 0 || len(chapters) > maxReaderChapters {
 		return errors.New("invalid or empty reader navigation list")
 	}
-	base, err := komiku.ValidateSeriesURL(seriesURL)
+	base, err := kiryuu.ValidateSeriesURL(seriesURL)
 	if err != nil {
 		return err
 	}
 	seen := map[string]bool{}
 	for i, ch := range chapters {
-		identity, err := readerRawChapter(ch.RawID)
-		if err != nil || ch.Display != identity.Display || ch.Number != identity.Number {
+		identity, err := readerChapterIdentity(ch.Display, ch.RawID)
+		if err != nil || identity.Display != ch.Display || identity.Number != ch.Number {
 			return errors.New("inconsistent reader chapter identity")
 		}
 		u, err := url.Parse(ch.URL)
 		if err != nil || len(ch.URL) > 8192 || u.User != nil || u.Scheme != base.Scheme || u.Host != base.Host || u.Opaque != "" {
 			return errors.New("invalid reader chapter URL")
 		}
-		// Use the same scraper identity rules as real discovery, including raw
-		// fractions, without treating a persisted URL as a filesystem path.
-		path := strings.TrimSuffix(u.Path, "/")
-		if !strings.HasPrefix(path, "/") || strings.Count(path, "/") != 1 || !strings.HasSuffix(path, "-chapter-"+ch.RawID) || strings.ContainsAny(u.Path, "\\\x00") {
+		// Chapter links live on /manga/<slug>/chapter-<number>.<postID>/; the
+		// trailing post ID must match the recorded raw identity.
+		match := readerChapterPathPattern.FindStringSubmatch(u.Path)
+		if match == nil || match[1] != ch.RawID || strings.ContainsAny(u.Path, "\\\x00") {
 			return errors.New("chapter URL does not match its raw identity")
 		}
 		if ch.Href != "" {
@@ -133,13 +138,13 @@ func (fs *readerFS) manifest(dir, seriesURL string) (readerManifest, error) {
 	return manifest, nil
 }
 
-func (fs *readerFS) offlineMetadata(seriesURL string) ([]komiku.Chapter, map[string]readerManifest, error) {
+func (fs *readerFS) offlineMetadata(seriesURL string) ([]kiryuu.Chapter, map[string]readerManifest, error) {
 	entries, err := fs.entries(".reader")
 	if err != nil {
 		return nil, nil, err
 	}
 	manifests := map[string]readerManifest{}
-	var chapters []komiku.Chapter
+	var chapters []kiryuu.Chapter
 	var latest time.Time
 	for _, entry := range entries {
 		if !strings.HasPrefix(entry.Name(), "chapter-") {

@@ -16,10 +16,11 @@ import (
 // coverFixtureServer serves a series page plus its cover image.
 func coverFixtureServer(t *testing.T) *httptest.Server {
 	t.Helper()
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	var server *httptest.Server
+	server = httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch {
 		case strings.HasPrefix(r.URL.Path, "/manga/"):
-			fmt.Fprint(w, `<meta property="og:image" content="/covers/fixture.jpg">`)
+			fmt.Fprintf(w, `<script type="application/ld+json">{"@type":["Book","ComicSeries"],"name":"Fixture","image":{"url":%q}}</script>`, server.URL+"/covers/fixture.jpg")
 		case strings.HasPrefix(r.URL.Path, "/covers/"):
 			_, _ = w.Write(append([]byte{0xff, 0xd8}, make([]byte, 64)...))
 		default:
@@ -129,10 +130,11 @@ func TestCoverCommandAllWalksTheLibrary(t *testing.T) {
 }
 
 func TestCoverAllPrefersManifestAndIgnoresLegacyURLs(t *testing.T) {
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	var server *httptest.Server
+	server = httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch r.URL.Path {
 		case "/manga/original/", "/manga/fallback/":
-			fmt.Fprint(w, `<meta property="og:image" content="/covers/fixture.jpg">`)
+			fmt.Fprintf(w, `<script type="application/ld+json">{"@type":["Book","ComicSeries"],"name":"Fixture","image":{"url":%q}}</script>`, server.URL+"/covers/fixture.jpg")
 		case "/covers/fixture.jpg":
 			_, _ = w.Write(append([]byte{0xff, 0xd8}, make([]byte, 64)...))
 		default:
@@ -180,7 +182,7 @@ func TestCoverAllPrefersManifestAndIgnoresLegacyURLs(t *testing.T) {
 
 func TestCoverCommandRejectsMixedTargets(t *testing.T) {
 	var stdout, stderr bytes.Buffer
-	code := Main(context.Background(), []string{"cover", "--all", "https://komiku.org/manga/x/"}, &stdout, &stderr, Dependencies{})
+	code := Main(context.Background(), []string{"cover", "--all", "https://v7.kiryuu.to/manga/x/"}, &stdout, &stderr, Dependencies{})
 	if code == 0 {
 		t.Fatal("mixed --all and URL was accepted")
 	}
@@ -214,7 +216,7 @@ func TestInfoReportIncludesCoverPath(t *testing.T) {
 	if err := os.WriteFile(filepath.Join(dir, "cover.webp"), []byte("img"), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	info, err := localSeriesInfo(root, "fixture", "https://komiku.org/manga/fixture/", false)
+	info, err := localSeriesInfo(root, "fixture", "https://v7.kiryuu.to/manga/fixture/", false)
 	if err != nil {
 		t.Fatal(err)
 	}

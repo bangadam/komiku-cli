@@ -20,7 +20,7 @@ import (
 	"github.com/charmbracelet/lipgloss"
 
 	"github.com/bangadam/komiku-cli/cli"
-	"github.com/bangadam/komiku-cli/komiku"
+	"github.com/bangadam/komiku-cli/kiryuu"
 	packer "github.com/bangadam/komiku-cli/pack"
 	"github.com/bangadam/komiku-cli/store"
 )
@@ -65,7 +65,7 @@ func Run(ctx context.Context, input io.Reader, output, stderr io.Writer, depende
 		ConfigPath:  configPath,
 		SolverPath:  cli.ResolveSolverPath(fileConfig.Solver),
 		SessionPath: cli.SessionCachePath(configPath),
-	}.NewKomikuClient(config.ImageDelay)
+	}.NewKiryuuClient(config.ImageDelay)
 	workers := dependencies.Workers
 	if workers == 0 {
 		workers = 3
@@ -179,7 +179,7 @@ func (w *ansiFreeWriter) Write(data []byte) (int, error) {
 }
 
 type realBackend struct {
-	client     *komiku.Client
+	client     *kiryuu.Client
 	config     cli.Config
 	configFile cli.FileConfig
 	configPath string
@@ -333,11 +333,11 @@ func normalizeExistingDirectory(path, home string) (string, error) {
 	return filepath.Clean(abs), nil
 }
 
-func (b *realBackend) Search(ctx context.Context, query string) ([]komiku.Series, error) {
+func (b *realBackend) Search(ctx context.Context, query string) ([]kiryuu.Series, error) {
 	return b.client.Search(ctx, query)
 }
 
-func (b *realBackend) Discover(ctx context.Context, seriesURL string) ([]komiku.Chapter, error) {
+func (b *realBackend) Discover(ctx context.Context, seriesURL string) ([]kiryuu.Chapter, error) {
 	return b.client.Discover(ctx, seriesURL)
 }
 
@@ -361,14 +361,14 @@ func (b *realBackend) ensureStore(seriesURL string) (*store.SeriesStore, string,
 	return seriesStore, series, nil
 }
 
-func (b *realBackend) LoadVolumes(ctx context.Context, seriesURL string, chapters []komiku.Chapter) ([]komiku.Volume, error) {
+func (b *realBackend) LoadVolumes(ctx context.Context, seriesURL string, chapters []kiryuu.Chapter) ([]kiryuu.Volume, error) {
 	seriesStore, series, err := b.ensureStore(seriesURL)
 	if err != nil {
 		return nil, err
 	}
 	return cli.LoadVolumeMapping(ctx, b.client, seriesStore.Dir(), series, chapters)
 }
-func (b *realBackend) LoadWikipediaVolumes(ctx context.Context, seriesURL string) ([]komiku.Volume, error) {
+func (b *realBackend) LoadWikipediaVolumes(ctx context.Context, seriesURL string) ([]kiryuu.Volume, error) {
 	parsed, err := url.Parse(seriesURL)
 	if err != nil {
 		return nil, err
@@ -388,7 +388,7 @@ func (b *realBackend) LoadWikipediaVolumes(ctx context.Context, seriesURL string
 	return b.client.FetchWikipediaDisplayVolumes(ctx, strings.Join(words, " "))
 }
 
-func (b *realBackend) SaveManualVolumes(seriesURL string, volumes []komiku.Volume, maxChapter int) error {
+func (b *realBackend) SaveManualVolumes(seriesURL string, volumes []kiryuu.Volume, maxChapter int) error {
 	seriesStore, _, err := b.ensureStore(seriesURL)
 	if err != nil {
 		return err
@@ -405,7 +405,7 @@ func (b *realBackend) Start(ctx context.Context, seriesURL string, jobs []cli.Jo
 	return engine.Start(ctx, jobs), nil
 }
 
-func (b *realBackend) RecordPackManifest(seriesURL, provenance string, mappings []komiku.Volume, jobs []cli.Job, results []cli.Result) error {
+func (b *realBackend) RecordPackManifest(seriesURL, provenance string, mappings []kiryuu.Volume, jobs []cli.Job, results []cli.Result) error {
 	seriesStore, series, err := b.ensureStore(seriesURL)
 	if err != nil {
 		return err
@@ -413,7 +413,7 @@ func (b *realBackend) RecordPackManifest(seriesURL, provenance string, mappings 
 	return cli.RecordPackManifest(seriesStore.Dir(), series, seriesURL, provenance, mappings, jobs, results)
 }
 
-func (b *realBackend) PreparePack(seriesURL string, preset packer.Preset, mappings []komiku.Volume, jobs []cli.Job, results []cli.Result) cli.PackPlan {
+func (b *realBackend) PreparePack(seriesURL string, preset packer.Preset, mappings []kiryuu.Volume, jobs []cli.Job, results []cli.Result) cli.PackPlan {
 	seriesStore, series, err := b.ensureStore(seriesURL)
 	if err != nil {
 		return cli.PackPlan{Preset: preset, DisabledReason: err.Error()}

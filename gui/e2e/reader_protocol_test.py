@@ -101,9 +101,10 @@ class FixtureTests(IsolatedTest):
             for image in directory.rglob("*.png"):
                 validate_png(image.read_bytes())
             for raw, count in CHAPTERS[series].items():
-                code, body = fetch(f"{fixture.base_url}/{series}-chapter-{raw}/")
+                chapter_id = fixture.chapter_id(series, raw)
+                code, body = fetch(f"{fixture.base_url}/wp-json/kiru/v1/chapter?id={chapter_id}")
                 self.assertEqual(code, 200)
-                self.assertEqual(body.count(b'class="reader-page klazy"'), count)
+                self.assertEqual(body.count(b"<img "), count)
                 code, image = fetch(fixture.base_url + fixture.image_path(series, raw, 1))
                 self.assertEqual(code, 200)
                 validate_png(image)
@@ -231,12 +232,12 @@ class ReaderProtocolTests(IsolatedTest):
         self.assertEqual(report["series"], series)
         self.assertEqual(report["series_url"], f"{fixture.base_url}/manga/{series}/")
         self.assertEqual(report["chapter"]["number"], number)
-        self.assertEqual(report["chapter"]["url"], f"{fixture.base_url}/{series}-chapter-{chapter}/")
+        self.assertEqual(report["chapter"]["url"], fixture.chapter_url(series, chapter))
         self.assertEqual(report["chapter_index"], index + 1)
         self.assertEqual(report["chapter_total"], len(raw_ids))
         self.assertEqual([row["number"] for row in report["chapters"]], numbers)
         for raw, entry in zip(raw_ids, report["chapters"]):
-            self.assertEqual(entry["url"], f"{fixture.base_url}/{series}-chapter-{raw}/")
+            self.assertEqual(entry["url"], fixture.chapter_url(series, raw))
             self.assertIn("done", entry)
         self.assertEqual((report.get("prev") or {}).get("number"), numbers[index - 1] if index else None)
         self.assertEqual((report.get("next") or {}).get("number"), numbers[index + 1] if index + 1 < len(numbers) else None)

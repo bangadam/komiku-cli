@@ -12,7 +12,7 @@ import (
 	"github.com/spf13/cobra"
 	"github.com/spf13/pflag"
 
-	"github.com/bangadam/komiku-cli/komiku"
+	"github.com/bangadam/komiku-cli/kiryuu"
 )
 
 const coverCommandUsage = "usage: komiku-cli cover <series-url>|--all [--out DIR] [--force] [--json]"
@@ -57,7 +57,7 @@ func runCover(ctx context.Context, args []string, all, asJSON, force bool, flags
 	if err != nil {
 		return err
 	}
-	client := dependencies.newKomikuClient(config.ImageDelay)
+	client := dependencies.newKiryuuClient(config.ImageDelay)
 
 	var targets []localSeriesTarget
 	if all {
@@ -66,7 +66,7 @@ func runCover(ctx context.Context, args []string, all, asJSON, force bool, flags
 			return err
 		}
 	} else {
-		parsed, err := komiku.ValidateSeriesURL(args[0])
+		parsed, err := kiryuu.ValidateSeriesURL(args[0])
 		if err != nil {
 			return err
 		}
@@ -115,7 +115,7 @@ func runCover(ctx context.Context, args []string, all, asJSON, force bool, flags
 	return nil
 }
 
-func saveSeriesCover(ctx context.Context, client *komiku.Client, root string, target localSeriesTarget, force bool) CoverReport {
+func saveSeriesCover(ctx context.Context, client *kiryuu.Client, root string, target localSeriesTarget, force bool) CoverReport {
 	report := CoverReport{Slug: target.Slug}
 	dir := filepath.Join(root, target.Slug)
 	if err := os.MkdirAll(dir, 0o755); err != nil {
@@ -201,7 +201,7 @@ func writeFileAtomic(path string, data []byte) error {
 
 // fetchCoverBestEffort saves a cover after a download without turning a cover
 // problem into a download failure.
-func fetchCoverBestEffort(ctx context.Context, client *komiku.Client, seriesDir, seriesURL string) (string, error) {
+func fetchCoverBestEffort(ctx context.Context, client *kiryuu.Client, seriesDir, seriesURL string) (string, error) {
 	if _, ok := existingCover(seriesDir); ok {
 		return "", nil
 	}

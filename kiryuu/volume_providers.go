@@ -1,5 +1,5 @@
 // volume_providers.go fetches per-chapter volume numbers from MangaDex and the community Fandom wiki.
-package komiku
+package kiryuu
 
 import (
 	"context"

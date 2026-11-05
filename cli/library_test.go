@@ -166,9 +166,9 @@ func TestLocalSeriesURLPrefersManifestThenSlugFallback(t *testing.T) {
 		base        string
 		want        string
 	}{
-		{name: "manifest", slug: "renamed", manifestURL: "https://komiku.org/manga/original/", base: "http://127.0.0.1:9999", want: "https://komiku.org/manga/original/"},
+		{name: "manifest", slug: "renamed", manifestURL: "https://v7.kiryuu.to/manga/original/", base: "http://127.0.0.1:9999", want: "https://v7.kiryuu.to/manga/original/"},
 		{name: "fallback", slug: "fixture", base: "http://127.0.0.1:9999/", want: "http://127.0.0.1:9999/manga/fixture/"},
-		{name: "default host", slug: "fixture", want: "https://komiku.org/manga/fixture/"},
+		{name: "default host", slug: "fixture", want: "https://v7.kiryuu.to/manga/fixture/"},
 		{name: "invalid manifest URL", slug: "fixture", manifestURL: "https://example.invalid/manga/wrong/", base: "http://127.0.0.1:9999", want: "http://127.0.0.1:9999/manga/fixture/"},
 		{name: "escaped slug", slug: "fixture#extra", base: "http://127.0.0.1:9999", want: "http://127.0.0.1:9999/manga/fixture%23extra/"},
 	} {
@@ -225,7 +225,7 @@ func TestLibraryIgnoresLegacySubscriptionFile(t *testing.T) {
 	root := t.TempDir()
 	configPath := isolatedCLIConfig(t)
 	legacyPath := filepath.Join(filepath.Dir(configPath), "subscriptions.json")
-	legacy := `{"subscriptions":[{"slug":"remote-only","series_url":"https://komiku.org/manga/remote-only/"}]}`
+	legacy := `{"subscriptions":[{"slug":"remote-only","series_url":"https://v7.kiryuu.to/manga/remote-only/"}]}`
 	if err := storeWrite(t, legacyPath, legacy); err != nil {
 		t.Fatal(err)
 	}

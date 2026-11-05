@@ -15,7 +15,7 @@ import (
 
 	packer "github.com/bangadam/komiku-cli/pack"
 
-	"github.com/bangadam/komiku-cli/komiku"
+	"github.com/bangadam/komiku-cli/kiryuu"
 )
 
 const packCommandUsage = "usage: komiku-cli pack <series-dir> [--vol LIST] [--volume-map V:S-E,...] [--preset medium|small|tiny|raw] [--recover-wikipedia [--wikipedia-title TITLE]] [--flat [--series NAME]]"
@@ -54,9 +54,9 @@ func runPack(ctx context.Context, seriesDir string, flags *pflag.FlagSet, stdout
 	// --recover-wikipedia is an explicit request for the Wikipedia provider,
 	// so it wins over the MangaDex default unless --volume-source was passed.
 	if recoverWikipedia && !flags.Changed("volume-source") {
-		volumeSourceName = string(komiku.VolumeSourceWikipedia)
+		volumeSourceName = string(kiryuu.VolumeSourceWikipedia)
 	}
-	volumeSource, err := komiku.ParseVolumeSource(volumeSourceName)
+	volumeSource, err := kiryuu.ParseVolumeSource(volumeSourceName)
 	if err != nil {
 		return err
 	}
@@ -82,7 +82,7 @@ func runPack(ctx context.Context, seriesDir string, flags *pflag.FlagSet, stdout
 	if !flat && seriesName != "" {
 		return errors.New("--series requires --flat")
 	}
-	var mappings []komiku.Volume
+	var mappings []kiryuu.Volume
 	if volumeMapExpression != "" {
 		mappings, err = ParseVolumeMap(volumeMapExpression)
 		if err != nil {
@@ -108,11 +108,11 @@ type PackDownloadedOptions struct {
 	VolumeExpression string
 	// Mappings is an explicit, already-resolved volume mapping (for example
 	// the one the GUI displays). When set, packing stays offline.
-	Mappings         []komiku.Volume
+	Mappings         []kiryuu.Volume
 	Preset           packer.Preset
 	RecoverWikipedia bool
 	RecoverComplete  bool
-	VolumeSource     komiku.VolumeSource
+	VolumeSource     kiryuu.VolumeSource
 	WikipediaTitle   string
 	Flat             bool
 	SeriesName       string
@@ -129,7 +129,7 @@ func PackDownloaded(ctx context.Context, seriesDir string, options PackDownloade
 		// Direct API callers may leave VolumeSource empty; --recover-wikipedia
 		// has always meant the Wikipedia provider.
 		if options.VolumeSource == "" {
-			options.VolumeSource = komiku.VolumeSourceWikipedia
+			options.VolumeSource = kiryuu.VolumeSourceWikipedia
 		}
 		return packWithRecovery(ctx, stdout, seriesDir, options)
 	}
@@ -291,7 +291,7 @@ func executePackCommand(ctx context.Context, stdout io.Writer, plan PackPlan) er
 func packWithRecovery(ctx context.Context, stdout io.Writer, seriesDir string, options PackDownloadedOptions) error {
 	recovery, err := prepareVolumeRecovery(ctx, seriesDir, options.WikipediaTitle, options.VolumeExpression, options.Preset, options.HTTP, options.RecoverComplete, options.VolumeSource)
 	if err != nil {
-		if errors.Is(err, komiku.ErrNoWikipediaVolumeRows) {
+		if errors.Is(err, kiryuu.ErrNoWikipediaVolumeRows) {
 			fmt.Fprintf(stdout, "no volume grouping found for this series; packing the flat chapter range instead\n")
 			return runFlatPack(ctx, seriesDir, options)
 		}

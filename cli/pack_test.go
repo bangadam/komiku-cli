@@ -11,7 +11,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/bangadam/komiku-cli/komiku"
+	"github.com/bangadam/komiku-cli/kiryuu"
 	packer "github.com/bangadam/komiku-cli/pack"
 	"github.com/bangadam/komiku-cli/store"
 )
@@ -21,7 +21,7 @@ func TestPreparePackUsesLocalSmallPagesAndExplainsMissingPages(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	chapter := komiku.Chapter{RawID: "1", Display: "1", Number: 1, URL: "https://fixture.invalid/chapter/actual/"}
+	chapter := kiryuu.Chapter{RawID: "1", Display: "1", Number: 1, URL: "https://fixture.invalid/chapter/actual/"}
 	job := Job{Chapter: chapter, Volume: 1}
 	dir, err := seriesStore.ChapterDir(chapter.Display, "", 1, false)
 	if err != nil {
@@ -37,7 +37,7 @@ func TestPreparePackUsesLocalSmallPagesAndExplainsMissingPages(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
-	mapping := []komiku.Volume{{Volume: 1, Start: 1, End: 1}}
+	mapping := []kiryuu.Volume{{Volume: 1, Start: 1, End: 1}}
 	result := []Result{{Chapter: chapter, Status: Done, Total: 2, Success: 2}}
 	plan := PreparePack(seriesStore, "Series", packer.Raw, mapping, []Job{job}, result)
 	if plan.DisabledReason != "" || len(plan.Skipped) != 0 || len(plan.Volumes) != 1 || plan.Volumes[0].Chapters[0].ExpectedPages != 2 {
@@ -58,8 +58,8 @@ func TestPreparePackRequiresMappedDoneVolumes(t *testing.T) {
 	if plan := PreparePack(seriesStore, "Series", packer.Raw, nil, nil, nil); len(plan.Skipped) != 1 || !strings.Contains(plan.Skipped[0].Reason, "no flat chapter run") {
 		t.Fatalf("reason=%+v", plan)
 	}
-	mapping := []komiku.Volume{{Volume: 1, Start: 1, End: 1}}
-	chapter := komiku.Chapter{RawID: "1", Display: "1", Number: 1, URL: "https://fixture.invalid/chapter/actual/"}
+	mapping := []kiryuu.Volume{{Volume: 1, Start: 1, End: 1}}
+	chapter := kiryuu.Chapter{RawID: "1", Display: "1", Number: 1, URL: "https://fixture.invalid/chapter/actual/"}
 	plan := PreparePack(seriesStore, "Series", packer.Raw, mapping, []Job{{Chapter: chapter, Volume: 1}}, []Result{{Chapter: chapter, Status: Part}})
 	if len(plan.Skipped) != 1 || !strings.Contains(plan.Skipped[0].Reason, "not completely downloaded") {
 		t.Fatalf("reason=%+v", plan)
@@ -68,7 +68,7 @@ func TestPreparePackRequiresMappedDoneVolumes(t *testing.T) {
 
 func TestPreparePackFlatRunWithoutMappingPacksChaptersFromTo(t *testing.T) {
 	seriesStore, _ := store.Open(t.TempDir(), "series")
-	chapters := []komiku.Chapter{
+	chapters := []kiryuu.Chapter{
 		{RawID: "3", Display: "3", Number: 3, URL: "three"},
 		{RawID: "1", Display: "1", Number: 1, URL: "one"},
 		{RawID: "2", Display: "2", Number: 2, URL: "two"},
@@ -96,7 +96,7 @@ func TestPreparePackFlatRunWithoutMappingPacksChaptersFromTo(t *testing.T) {
 
 func TestPreparePackFlatRunIncludesFractionalExtrasAndReportsGaps(t *testing.T) {
 	seriesStore, _ := store.Open(t.TempDir(), "series")
-	chapters := []komiku.Chapter{
+	chapters := []kiryuu.Chapter{
 		{RawID: "1", Display: "1", Number: 1, URL: "one"},
 		{RawID: "1.5", Display: "1.5", Number: 1.5, URL: "extra"},
 		{RawID: "2", Display: "2", Number: 2, URL: "two"},
@@ -119,8 +119,8 @@ func TestPreparePackFlatRunIncludesFractionalExtrasAndReportsGaps(t *testing.T) 
 	if len(plan.Volumes[0].Chapters) != 3 || plan.Volumes[0].Chapters[1].Display != "1.5" {
 		t.Fatalf("fractional extra not packed inline: %+v", plan.Volumes[0].Chapters)
 	}
-	gapOne := komiku.Chapter{RawID: "1", Display: "1", Number: 1, URL: "one"}
-	gapThree := komiku.Chapter{RawID: "3", Display: "3", Number: 3, URL: "three"}
+	gapOne := kiryuu.Chapter{RawID: "1", Display: "1", Number: 1, URL: "one"}
+	gapThree := kiryuu.Chapter{RawID: "3", Display: "3", Number: 3, URL: "three"}
 	plan = PreparePack(seriesStore, "Series", packer.Raw, nil, []Job{{Chapter: gapOne}, {Chapter: gapThree}}, []Result{
 		{Chapter: gapOne, Status: Done, Total: 1, Success: 1},
 		{Chapter: gapThree, Status: Done, Total: 1, Success: 1},
@@ -132,8 +132,8 @@ func TestPreparePackFlatRunIncludesFractionalExtrasAndReportsGaps(t *testing.T) 
 
 func TestPreparePackReportsIntentionallyIncompleteMappedSelection(t *testing.T) {
 	seriesStore, _ := store.Open(t.TempDir(), "series")
-	mapping := []komiku.Volume{{Volume: 1, Start: 1, End: 2}}
-	chapter := komiku.Chapter{RawID: "1", Display: "1", Number: 1, URL: "one"}
+	mapping := []kiryuu.Volume{{Volume: 1, Start: 1, End: 2}}
+	chapter := kiryuu.Chapter{RawID: "1", Display: "1", Number: 1, URL: "one"}
 	plan := PreparePack(seriesStore, "Series", packer.Raw, mapping, []Job{{Chapter: chapter, Volume: 1}}, []Result{{Chapter: chapter, Status: Done}})
 	if len(plan.Volumes) != 0 || len(plan.Skipped) != 1 || !strings.Contains(plan.Skipped[0].Reason, "chapter 2") {
 		t.Fatalf("incomplete mapped selection plan=%+v", plan)

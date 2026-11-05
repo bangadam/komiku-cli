@@ -1,5 +1,5 @@
 // volume_wikipedia.go resolves Wikipedia article titles and fetches their volume tables.
-package komiku
+package kiryuu
 
 import (
 	"context"

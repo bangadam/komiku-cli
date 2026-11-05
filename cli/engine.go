@@ -9,7 +9,7 @@ import (
 	"sync/atomic"
 	"time"
 
-	"github.com/bangadam/komiku-cli/komiku"
+	"github.com/bangadam/komiku-cli/kiryuu"
 	"github.com/bangadam/komiku-cli/store"
 )
 
@@ -23,14 +23,14 @@ const (
 )
 
 type Job struct {
-	Chapter   komiku.Chapter
+	Chapter   kiryuu.Chapter
 	Volume    int
 	Flat      bool
 	Ambiguous bool
 }
 
 type Result struct {
-	Chapter   komiku.Chapter
+	Chapter   kiryuu.Chapter
 	Status    Status
 	Success   int
 	Total     int
@@ -67,7 +67,7 @@ type Event struct {
 	At       time.Time
 	Kind     EventKind
 	JobIndex int
-	Chapter  komiku.Chapter
+	Chapter  kiryuu.Chapter
 	Page     int
 	Pages    int
 	Bytes    int64
@@ -89,7 +89,7 @@ type Summary struct {
 }
 
 type Engine struct {
-	Client  *komiku.Client
+	Client  *kiryuu.Client
 	Store   *store.SeriesStore
 	Workers int
 	Now     func() time.Time
@@ -99,7 +99,7 @@ type Batch struct {
 	events chan Event
 	done   chan struct{}
 	cancel context.CancelFunc
-	client *komiku.Client
+	client *kiryuu.Client
 	now    func() time.Time
 
 	eventMu     sync.Mutex
@@ -433,7 +433,7 @@ func (e *Engine) downloadChapter(ctx context.Context, batch *Batch, jobIndex int
 		}
 		batch.emit(Event{Kind: PageStarted, JobIndex: jobIndex, Chapter: chapter, Page: page, Pages: len(images)})
 		var written int64
-		err := e.Client.DownloadImage(ctx, imageURL, chapter.URL, func(extension string, body io.Reader) error {
+		err := e.Client.DownloadImage(ctx, imageURL, func(extension string, body io.Reader) error {
 			counter := &countingReader{reader: body}
 			err := store.WritePage(dir, page, extension, counter)
 			written = counter.count
@@ -483,7 +483,7 @@ func (r *countingReader) Read(buffer []byte) (int, error) {
 	return n, err
 }
 
-func interruptedResult(chapter komiku.Chapter, success, total int, err error) Result {
+func interruptedResult(chapter kiryuu.Chapter, success, total int, err error) Result {
 	result := Result{Chapter: chapter, Status: Part, Success: success, Total: total}
 	if err != nil {
 		result.Errors = []string{err.Error()}

@@ -14,7 +14,7 @@ import (
 	tea "github.com/charmbracelet/bubbletea"
 
 	"github.com/bangadam/komiku-cli/cli"
-	"github.com/bangadam/komiku-cli/komiku"
+	"github.com/bangadam/komiku-cli/kiryuu"
 	packer "github.com/bangadam/komiku-cli/pack"
 )
 
@@ -163,7 +163,7 @@ func TestRealBackendWikipediaVolumesIgnoresDownloadMappingCache(t *testing.T) {
 		body := `<section aria-labelledby="Volumes"><th scope="row" id="vol1">1</th><li>Days 1: one</li></section>`
 		return &http.Response{StatusCode: http.StatusOK, Status: "200 OK", Header: make(http.Header), Body: io.NopCloser(strings.NewReader(body)), Request: request}, nil
 	})}
-	backend := &realBackend{client: komiku.NewClient(httpClient, 0), config: cli.Config{OutputRoot: outputRoot}}
+	backend := &realBackend{client: kiryuu.NewClient(httpClient, 0), config: cli.Config{OutputRoot: outputRoot}}
 
 	volumes, err := backend.LoadWikipediaVolumes(context.Background(), "https://fixture.invalid/manga/sakamoto-days/")
 	if err != nil {

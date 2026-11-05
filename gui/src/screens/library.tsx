@@ -90,7 +90,7 @@ function seriesStatus(
 // Prefer the URL the CLI recorded; only fall back to the conventional path for
 // series downloaded before a pack manifest existed.
 function seriesUrl(item: { slug: string; series_url?: string }): string {
-  return item.series_url ?? `https://komiku.org/manga/${item.slug}/`
+  return item.series_url ?? `https://v7.kiryuu.to/manga/${item.slug}/`
 }
 
 function filterSeries(

@@ -165,7 +165,7 @@ export function SearchScreen({
 
       <PageHeader
         title="Search"
-        subtitle="Find a series by title, or paste a Komiku URL to open it directly"
+        subtitle="Find a series by title, or paste a Kiryuu URL to open it directly"
       >
         <span className="rounded-[6px] bg-muted px-2 py-1 font-mono text-[11px] text-dim">
           ⌘K
@@ -174,7 +174,7 @@ export function SearchScreen({
 
       {!hasCliBridge ? (
         <EmptyState
-          title="Open the desktop app to search komiku.org"
+          title="Open the desktop app to search Kiryuu"
           hint="The browser preview cannot reach the komiku-cli binary."
           icon={Search}
         />
@@ -187,7 +187,7 @@ export function SearchScreen({
               value={query}
               onChange={(event) => handleQueryChange(event.target.value)}
               onKeyDown={handleInputKeyDown}
-              placeholder="Search a title or paste a komiku URL"
+              placeholder="Search a title or paste a Kiryuu URL"
               spellCheck={false}
               autoFocus
               className="min-w-0 flex-1 bg-transparent text-[15px] text-foreground outline-none placeholder:text-dim"
@@ -236,7 +236,7 @@ export function SearchScreen({
 
           <div className="flex min-h-0 flex-1 flex-col gap-2 overflow-y-auto">
             {searching ? (
-              <LoadingState label="Searching komiku.org…" />
+              <LoadingState label="Searching Kiryuu…" />
             ) : results.error ? (
               <ErrorState
                 message={results.error}
@@ -245,7 +245,7 @@ export function SearchScreen({
             ) : !trimmedQuery ? (
               <EmptyState
                 title="Search a series"
-                hint="Type a title or paste a komiku.org/manga/… URL"
+                hint="Type a title or paste a v7.kiryuu.to/manga/… URL"
                 icon={Search}
               />
             ) : urlSlug ? (
@@ -324,7 +324,7 @@ export function SearchScreen({
           <div className="flex shrink-0 items-center gap-2.5 rounded-[8px] border border-border-subtle bg-muted p-3">
             <Link className="size-3.5 shrink-0 text-dim" strokeWidth={1.8} />
             <span className="text-[12px] text-muted-foreground">
-              Tip: paste any komiku.org/manga/… URL here and press Enter to open
+              Tip: paste any v7.kiryuu.to/manga/… URL here and press Enter to open
               its chapter list.
             </span>
           </div>

@@ -1,5 +1,5 @@
 // volume_wikipedia_parse.go parses per-volume chapter rows out of English Wikipedia articles.
-package komiku
+package kiryuu
 
 import (
 	"errors"
@@ -21,7 +21,7 @@ func ParseWikipediaDisplayVolumes(data []byte) ([]Volume, error) {
 		start  int
 		end    int
 	}
-	tags := tagPattern.FindAllIndex(section, -1)
+	tags := volumeTagPattern.FindAllIndex(section, -1)
 	markers := make([]marker, 0)
 	for _, bounds := range tags {
 		tag := section[bounds[0]:bounds[1]]
@@ -29,7 +29,7 @@ func ParseWikipediaDisplayVolumes(data []byte) ([]Volume, error) {
 		if !strings.HasPrefix(lower, "<th") || strings.HasPrefix(lower, "</") {
 			continue
 		}
-		attrs := parseAttrs(tag)
+		attrs := volumeAttrs(tag)
 		id := strings.ToLower(strings.TrimSpace(attrs["id"]))
 		if attrs["scope"] != "row" || !strings.HasPrefix(id, "vol") {
 			continue
@@ -111,7 +111,7 @@ func wikipediaRowChapters(row []byte) ([]int, error) {
 // wikipediaRowChapterLabels collects chapters from labeled entries such as
 // "Days 1:" inside the row, in document order.
 func wikipediaRowChapterLabels(row []byte) ([]int, error) {
-	text := html.UnescapeString(string(tagPattern.ReplaceAll(row, []byte(" "))))
+	text := html.UnescapeString(string(volumeTagPattern.ReplaceAll(row, []byte(" "))))
 	chapters := make([]int, 0)
 	seen := make(map[int]struct{})
 	for _, match := range wikipediaChapterPattern.FindAllStringSubmatch(text, -1) {
@@ -168,7 +168,7 @@ func wikipediaRowNumberedItems(row []byte) []int {
 	chapters := make([]int, 0)
 	seen := make(map[int]struct{})
 	for _, match := range listItemPattern.FindAllSubmatch(row, -1) {
-		text := strings.TrimSpace(html.UnescapeString(string(tagPattern.ReplaceAll(match[1], []byte(" ")))))
+		text := strings.TrimSpace(html.UnescapeString(string(volumeTagPattern.ReplaceAll(match[1], []byte(" ")))))
 		label := numberedItemPattern.FindStringSubmatch(text)
 		if label == nil {
 			continue
@@ -187,7 +187,7 @@ func wikipediaRowNumberedItems(row []byte) []int {
 }
 
 func wikipediaVolumesSection(data []byte) ([]byte, error) {
-	tags := tagPattern.FindAllIndex(data, -1)
+	tags := volumeTagPattern.FindAllIndex(data, -1)
 	start, depth := -1, 0
 	for _, bounds := range tags {
 		tag := data[bounds[0]:bounds[1]]
@@ -205,7 +205,7 @@ func wikipediaVolumesSection(data []byte) ([]byte, error) {
 				depth++
 				continue
 			}
-			if isVolumesSectionLabel(parseAttrs(tag)["aria-labelledby"]) {
+			if isVolumesSectionLabel(volumeAttrs(tag)["aria-labelledby"]) {
 				start, depth = bounds[1], 1
 			}
 		}

@@ -3,7 +3,7 @@
 
 Runs the real Vite app against the real komiku-cli binary (through the dev
 bridge) with a hermetic HOME, so every assertion is backed by actual CLI output.
-Discovery screens additionally hit the live komiku.org endpoints.
+Discovery screens additionally hit the live v7.kiryuu.to endpoints.
 
 Usage:
     python3 e2e/run.py            # full suite
@@ -251,15 +251,15 @@ def test_library(page: Page) -> None:
 def test_search(page: Page) -> None:
     goto(page, "Search")
     page.wait_for_timeout(600)
-    page.get_by_placeholder("Search a title or paste a komiku URL").fill("sakamoto")
+    page.get_by_placeholder("Search a title or paste a Kiryuu URL").fill("sakamoto")
     # Search is debounced and hits the live site, so wait for a result row
-    # instead of guessing a delay. komiku.org throttles bursts, so retry once
+    # instead of guessing a delay. v7.kiryuu.to throttles bursts, so retry once
     # with a fresh keystroke if the first request is refused.
     body = wait_for_text(page, r"In library|Not in library", timeout=45000)
     if "In library" not in body and "Not in library" not in body:
-        page.get_by_placeholder("Search a title or paste a komiku URL").fill("")
+        page.get_by_placeholder("Search a title or paste a Kiryuu URL").fill("")
         page.wait_for_timeout(800)
-        page.get_by_placeholder("Search a title or paste a komiku URL").fill("sakamoto days")
+        page.get_by_placeholder("Search a title or paste a Kiryuu URL").fill("sakamoto days")
         body = wait_for_text(page, r"In library|Not in library", timeout=45000)
     check("search returns results", "Sakamoto" in body, body[:500])
     check("search marks in-library results", "In library" in body, body[:800])
@@ -294,7 +294,7 @@ def test_series(page: Page) -> None:
     check("series open folder action", "Open folder" in body)
 
     # Selection drives the CTA count. The chapter list is discovered live from
-    # komiku.org, so only the shape of the label is asserted.
+    # v7.kiryuu.to, so only the shape of the label is asserted.
     page.get_by_role("button", name="All chapters").first.click()
     page.wait_for_timeout(800)
     body = page.locator("body").inner_text()
@@ -363,7 +363,7 @@ def test_settings(page: Page) -> None:
     check_no_subscription_ui("settings", body)
     check("settings preset", "Default CBZ preset" in body)
     check("settings delay", "Request delay" in body)
-    check("settings about", "Not affiliated with Komiku" in body)
+    check("settings about", "Not affiliated with Kiryuu" in body)
     footer = page.locator("main").inner_text()
     check(
         "settings footer shows real version",
@@ -393,7 +393,7 @@ def test_peringkat(page: Page) -> None:
     goto(page, "Rankings")
     body = wait_for_text(page, r"Chapter \d")
     check("peringkat rows load", bool(re.search(r"Chapter \d", body)))
-    check("peringkat title", "Komiku Rankings" in body, body[:300])
+    check("peringkat title", "Kiryuu Rankings" in body, body[:300])
     check("peringkat period switch", "Daily" in body and "Weekly" in body)
     check("peringkat rows", "Black Clover" in body or "Overgeared" in body, body[:600])
     check("peringkat rail", "Type mix" in body)
@@ -402,7 +402,7 @@ def test_peringkat(page: Page) -> None:
         bool(re.search(r"Man(?:g|h)wa", body)),
         body[:1200],
     )
-    check("peringkat source note", "komiku.org" in body)
+    check("peringkat source note", "v7.kiryuu.to" in body)
 
     rows_before = page.locator("main button").count()
     page.locator('[data-value="weekly"]').first.click()

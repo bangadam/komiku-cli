@@ -19,7 +19,7 @@ import (
 	"github.com/spf13/cobra"
 	"github.com/spf13/pflag"
 
-	"github.com/bangadam/komiku-cli/komiku"
+	"github.com/bangadam/komiku-cli/kiryuu"
 	packer "github.com/bangadam/komiku-cli/pack"
 	"github.com/bangadam/komiku-cli/store"
 )
@@ -87,7 +87,7 @@ func printHeadlessUsage(stderr io.Writer) {
 func NewRootCommand(stdout, stderr io.Writer, dependencies Dependencies) *cobra.Command {
 	root := &cobra.Command{
 		Use:           "komiku-cli",
-		Short:         "Keyboard-first Komiku manga downloader and offline CBZ packer",
+		Short:         "Keyboard-first Kiryuu manga downloader and offline CBZ packer",
 		Version:       VersionString(),
 		SilenceUsage:  true,
 		SilenceErrors: true,
@@ -192,7 +192,7 @@ func runDownload(ctx context.Context, seriesURL string, flags *pflag.FlagSet, st
 	if pack && volumeExpression == "" {
 		return errors.New("--pack requires --vol with a mapped volume selection")
 	}
-	parsedURL, err := komiku.ValidateSeriesURL(seriesURL)
+	parsedURL, err := kiryuu.ValidateSeriesURL(seriesURL)
 	if err != nil {
 		return err
 	}
@@ -233,7 +233,7 @@ func runDownload(ctx context.Context, seriesURL string, flags *pflag.FlagSet, st
 	if err != nil {
 		return err
 	}
-	client := dependencies.newKomikuClient(config.ImageDelay)
+	client := dependencies.newKiryuuClient(config.ImageDelay)
 	chapters, err := client.Discover(ctx, seriesURL)
 	if err != nil {
 		return fmt.Errorf("discover chapters: %w", err)
@@ -243,7 +243,7 @@ func runDownload(ctx context.Context, seriesURL string, flags *pflag.FlagSet, st
 	}
 	ambiguous := ambiguousChapterNumbers(chapters)
 	var jobs []Job
-	var selectedVolumes []komiku.Volume
+	var selectedVolumes []kiryuu.Volume
 	if chapterExpression != "" {
 		selected, err := selectChaptersForDownload(chapters, chapterExpression, seriesStore)
 		if err != nil {
@@ -261,7 +261,7 @@ func runDownload(ctx context.Context, seriesURL string, flags *pflag.FlagSet, st
 		if flat {
 			return errors.New("--flat is used with --ch; --vol requires a volume mapping")
 		}
-		volumeSource, sourceErr := komiku.ParseVolumeSource(volumeSourceName)
+		volumeSource, sourceErr := kiryuu.ParseVolumeSource(volumeSourceName)
 		if sourceErr != nil {
 			return sourceErr
 		}
@@ -367,12 +367,12 @@ func runDownload(ctx context.Context, seriesURL string, flags *pflag.FlagSet, st
 
 // selectChaptersForDownload supports the special selectors all, missing, and
 // latest:N on top of the explicit chapter expression syntax.
-func selectChaptersForDownload(chapters []komiku.Chapter, expression string, seriesStore *store.SeriesStore) ([]komiku.Chapter, error) {
+func selectChaptersForDownload(chapters []kiryuu.Chapter, expression string, seriesStore *store.SeriesStore) ([]kiryuu.Chapter, error) {
 	switch {
 	case strings.TrimSpace(expression) == "all":
-		return append([]komiku.Chapter(nil), chapters...), nil
+		return append([]kiryuu.Chapter(nil), chapters...), nil
 	case strings.TrimSpace(expression) == "missing":
-		missing := make([]komiku.Chapter, 0, len(chapters))
+		missing := make([]kiryuu.Chapter, 0, len(chapters))
 		for _, chapter := range chapters {
 			if !seriesStore.IsDone(chapter.Number) {
 				missing = append(missing, chapter)
@@ -388,7 +388,7 @@ func selectChaptersForDownload(chapters []komiku.Chapter, expression string, ser
 		if count > len(chapters) {
 			count = len(chapters)
 		}
-		return append([]komiku.Chapter(nil), chapters[len(chapters)-count:]...), nil
+		return append([]kiryuu.Chapter(nil), chapters[len(chapters)-count:]...), nil
 	default:
 		return SelectChapters(chapters, expression)
 	}
@@ -424,7 +424,7 @@ type ResultReport struct {
 	Errors     []string `json:"errors,omitempty"`
 }
 
-func writeDownloadReportJSON(stdout io.Writer, series, seriesURL string, summary Summary, volumes []komiku.Volume) error {
+func writeDownloadReportJSON(stdout io.Writer, series, seriesURL string, summary Summary, volumes []kiryuu.Volume) error {
 	report := DownloadReport{
 		Series:      series,
 		SeriesURL:   seriesURL,
@@ -457,12 +457,12 @@ func writeDownloadReportJSON(stdout io.Writer, series, seriesURL string, summary
 	return json.NewEncoder(stdout).Encode(report)
 }
 
-func SelectedVolumeMappings(volumes []komiku.Volume, expression string) ([]komiku.Volume, error) {
+func SelectedVolumeMappings(volumes []kiryuu.Volume, expression string) ([]kiryuu.Volume, error) {
 	wanted, err := parseIntegerSelection(expression)
 	if err != nil {
 		return nil, err
 	}
-	selected := make([]komiku.Volume, 0, len(wanted))
+	selected := make([]kiryuu.Volume, 0, len(wanted))
 	available := make(map[int]bool, len(volumes))
 	for _, volume := range volumes {
 		available[volume.Volume] = true
@@ -489,7 +489,7 @@ func SelectedVolumeMappings(volumes []komiku.Volume, expression string) ([]komik
 }
 
 // availableVolumes returns the sorted volume numbers present in a mapping.
-func availableVolumes(volumes []komiku.Volume) []int {
+func availableVolumes(volumes []kiryuu.Volume) []int {
 	numbers := make([]int, 0, len(volumes))
 	for _, volume := range volumes {
 		numbers = append(numbers, volume.Volume)
@@ -524,7 +524,7 @@ func formatVolumeList(numbers []int) string {
 	return strings.Join(parts, ",")
 }
 
-func validateMappedChapters(mapping komiku.Volume, jobs []Job) error {
+func validateMappedChapters(mapping kiryuu.Volume, jobs []Job) error {
 	discovered := make(map[int]bool, len(jobs))
 	for _, job := range jobs {
 		whole, err := strconv.Atoi(strings.SplitN(job.Chapter.Display, ".", 2)[0])
@@ -542,34 +542,34 @@ func validateMappedChapters(mapping komiku.Volume, jobs []Job) error {
 
 // cacheMatchesSource reports whether a cached mapping came from the requested
 // provider. Auto mode accepts any cache.
-func cacheMatchesSource(sourceURL string, source komiku.VolumeSource) bool {
+func cacheMatchesSource(sourceURL string, source kiryuu.VolumeSource) bool {
 	lower := strings.ToLower(sourceURL)
 	switch source {
-	case komiku.VolumeSourceMangaDex:
+	case kiryuu.VolumeSourceMangaDex:
 		return strings.Contains(lower, "mangadex.org")
-	case komiku.VolumeSourceWikipedia:
+	case kiryuu.VolumeSourceWikipedia:
 		return strings.Contains(lower, "wikipedia.org")
-	case komiku.VolumeSourceFandom:
+	case kiryuu.VolumeSourceFandom:
 		return strings.Contains(lower, "fandom.com")
 	default:
 		return true
 	}
 }
 
-func LoadVolumeMapping(ctx context.Context, client *komiku.Client, seriesDir, series string, chapters []komiku.Chapter) ([]komiku.Volume, error) {
-	return LoadVolumeMappingFrom(ctx, client, seriesDir, series, chapters, komiku.VolumeSourceMangaDex, false)
+func LoadVolumeMapping(ctx context.Context, client *kiryuu.Client, seriesDir, series string, chapters []kiryuu.Chapter) ([]kiryuu.Volume, error) {
+	return LoadVolumeMappingFrom(ctx, client, seriesDir, series, chapters, kiryuu.VolumeSourceMangaDex, false)
 }
 
 // LoadVolumeMappingFrom resolves the mapping using the requested provider.
 // forceSource makes the provider win over an existing .volumes.json cache;
 // without it the cache is authoritative, because users may pin a mapping by
 // editing that file.
-func LoadVolumeMappingFrom(ctx context.Context, client *komiku.Client, seriesDir, series string, chapters []komiku.Chapter, source komiku.VolumeSource, forceSource bool) ([]komiku.Volume, error) {
+func LoadVolumeMappingFrom(ctx context.Context, client *kiryuu.Client, seriesDir, series string, chapters []kiryuu.Chapter, source kiryuu.VolumeSource, forceSource bool) ([]kiryuu.Volume, error) {
 	cachePath := filepath.Join(seriesDir, ".volumes.json")
-	maxChapter := komiku.MaxDiscoveredChapter(chapters)
+	maxChapter := kiryuu.MaxDiscoveredChapter(chapters)
 	data, err := os.ReadFile(cachePath)
 	if err == nil {
-		cache, decodeErr := komiku.DecodeVolumeCache(data, maxChapter)
+		cache, decodeErr := kiryuu.DecodeVolumeCache(data, maxChapter)
 		if decodeErr != nil {
 			return nil, decodeErr
 		}
@@ -583,7 +583,7 @@ func LoadVolumeMappingFrom(ctx context.Context, client *komiku.Client, seriesDir
 	}
 	cache, err := client.FetchVolumeMappingFrom(ctx, strings.ReplaceAll(series, "-", " "), maxChapter, source)
 	if err != nil {
-		if errors.Is(err, komiku.ErrNoWikipediaVolumeRows) {
+		if errors.Is(err, kiryuu.ErrNoWikipediaVolumeRows) {
 			return nil, fmt.Errorf("%w; download with --ch ... --flat, then pack the chapter range with: komiku-cli pack %q --flat", err, seriesDir)
 		}
 		return nil, fmt.Errorf("%w; create/edit %s or use --ch ... --flat", err, cachePath)
@@ -606,7 +606,7 @@ func SeriesSlug(seriesURL *url.URL) string {
 	return name
 }
 
-func ambiguousChapterNumbers(chapters []komiku.Chapter) map[float64]bool {
+func ambiguousChapterNumbers(chapters []kiryuu.Chapter) map[float64]bool {
 	firstRaw := make(map[float64]string, len(chapters))
 	ambiguous := make(map[float64]bool)
 	for _, chapter := range chapters {

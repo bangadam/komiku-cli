@@ -20,12 +20,12 @@ import (
 	"testing"
 	"time"
 
-	"github.com/bangadam/komiku-cli/komiku"
+	"github.com/bangadam/komiku-cli/kiryuu"
 	"github.com/bangadam/komiku-cli/store"
 )
 
 func TestSelectChaptersRangeGapRawAndAmbiguity(t *testing.T) {
-	chapters := []komiku.Chapter{
+	chapters := []kiryuu.Chapter{
 		{RawID: "001", Display: "1", URL: "one-a", Number: 1},
 		{RawID: "01", Display: "1", URL: "one-b", Number: 1},
 		{RawID: "3", Display: "3", URL: "three", Number: 3},
@@ -48,12 +48,12 @@ func TestSelectChaptersRangeGapRawAndAmbiguity(t *testing.T) {
 }
 
 func TestSelectVolumesRejectsAmbiguityOnlyInsideRequestedVolumes(t *testing.T) {
-	chapters := []komiku.Chapter{
+	chapters := []kiryuu.Chapter{
 		{RawID: "001", Display: "1", URL: "one-a", Number: 1},
 		{RawID: "01", Display: "1", URL: "one-b", Number: 1},
 		{RawID: "2", Display: "2", URL: "two", Number: 2},
 	}
-	volumes := []komiku.Volume{{Volume: 1, Start: 1, End: 1}, {Volume: 2, Start: 2, End: 2}}
+	volumes := []kiryuu.Volume{{Volume: 1, Start: 1, End: 1}, {Volume: 2, Start: 2, End: 2}}
 	jobs, err := SelectVolumes(chapters, volumes, "2")
 	if err != nil || len(jobs) != 1 || jobs[0].Chapter.RawID != "2" {
 		t.Fatalf("unrelated ambiguity blocked volume 2: jobs=%+v err=%v", jobs, err)
@@ -119,7 +119,7 @@ func TestInvalidSeriesURLStopsBeforeNetworkAndStore(t *testing.T) {
 		url  string
 	}{
 		{name: "arbitrary host", url: "https://attacker.invalid/manga/series/"},
-		{name: "arbitrary production port", url: "https://komiku.org:8443/manga/series/"},
+		{name: "arbitrary production port", url: "https://v7.kiryuu.to:8443/manga/series/"},
 	}
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
@@ -153,18 +153,24 @@ func TestEngineStatusesRetryGapResumeAndAudit(t *testing.T) {
 		mu.Unlock()
 		switch r.URL.Path {
 		case "/manga/series/":
-			fmt.Fprint(w, `<a href="/different-chapter-1/"></a><a href="/different-chapter-2/"></a><a href="/different-chapter-3/"></a><a href="/different-chapter-4/"></a>`)
-		case "/different-chapter-1/":
-			fmt.Fprintf(w, `<img class="klazy" data-src="bad" src="%s/img/one.jpg"><img class="klazy" src="%s/img/two.png">`, server.URL, server.URL)
-		case "/different-chapter-2/":
-			fmt.Fprintf(w, `<img class="klazy" src="%s/img/good.jpg"><img class="klazy" src="%s/img/bad.jpg">`, server.URL, server.URL)
-		case "/different-chapter-3/":
-			fmt.Fprintf(w, `<img class="klazy" src="%s/img/bad-all.jpg">`, server.URL)
-		case "/different-chapter-4/":
-			fmt.Fprint(w, `<img class="other" src="ignored.jpg">`)
+			fmt.Fprint(w, kiryuuSeriesPage(server.URL, "series", []kiryuuChapterFixture{
+				{ID: "101", Number: "1"},
+				{ID: "102", Number: "2"},
+				{ID: "103", Number: "3"},
+				{ID: "104", Number: "4"},
+			}))
+		case "/wp-json/kiru/v1/chapter":
+			id := r.URL.Query().Get("id")
+			content := map[string]string{
+				"101": fmt.Sprintf(`<img src="%s/img/one.jpg"><img src="%s/img/two.png">`, server.URL, server.URL),
+				"102": fmt.Sprintf(`<img src="%s/img/good.jpg"><img src="%s/img/bad.jpg">`, server.URL, server.URL),
+				"103": fmt.Sprintf(`<img src="%s/img/bad-all.jpg">`, server.URL),
+				"104": `<img class="other" src="ignored.jpg">`,
+			}[id]
+			fmt.Fprint(w, kiryuuChapterObjectJSON("series", id, map[string]string{"101": "1", "102": "2", "103": "3", "104": "4"}[id], server.URL, content))
 		case "/img/one.jpg", "/img/good.jpg":
-			if r.Header.Get("Referer") == "" || r.Header.Get("User-Agent") == "" {
-				t.Errorf("missing image headers: %v", r.Header)
+			if r.Header.Get("User-Agent") == "" {
+				t.Errorf("missing image user agent: %v", r.Header)
 			}
 			_, _ = w.Write(append([]byte{0xff, 0xd8}, make([]byte, 11*1024)...))
 		case "/img/two.png":
@@ -183,7 +189,8 @@ func TestEngineStatusesRetryGapResumeAndAudit(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	client := komiku.NewClient(server.Client(), 0)
+	client := kiryuu.NewClient(server.Client(), 0)
+	client.BaseURL = server.URL
 	client.Sleep = func(context.Context, time.Duration) error { return nil }
 	chapters, err := client.Discover(context.Background(), server.URL+"/manga/series/")
 	if err != nil {
@@ -195,7 +202,9 @@ func TestEngineStatusesRetryGapResumeAndAudit(t *testing.T) {
 	}
 	firstSummary := (&Engine{Client: client, Store: seriesStore, Workers: 2}).Run(context.Background(), jobs)
 	results := firstSummary.Results
-	want := []Status{Done, Part, Fail, NoImg}
+	// Kiryuu's chapter endpoint errors when a chapter exposes no usable pages,
+	// so that chapter fails instead of reaching the empty-list NoImg status.
+	want := []Status{Done, Part, Fail, Fail}
 	for i := range want {
 		if results[i].Status != want[i] {
 			t.Fatalf("chapter %d status=%s errors=%v", i+1, results[i].Status, results[i].Errors)
@@ -225,9 +234,11 @@ func TestHeadlessFlatSmokeAndVolumeCachePrecedence(t *testing.T) {
 	server = httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch r.URL.Path {
 		case "/manga/fixture/":
-			fmt.Fprint(w, `<a href="/prefix-chapter-1/"></a>`)
-		case "/prefix-chapter-1/":
-			fmt.Fprintf(w, `<img class="klazy" src="%s/page one">`, server.URL)
+			fmt.Fprint(w, kiryuuSeriesPage(server.URL, "fixture", []kiryuuChapterFixture{
+				{ID: "101", Number: "1"},
+			}))
+		case "/wp-json/kiru/v1/chapter":
+			fmt.Fprint(w, kiryuuChapterObjectJSON("fixture", r.URL.Query().Get("id"), "1", server.URL, fmt.Sprintf(`<img src="%s/page one">`, server.URL)))
 		case "/page one":
 			imageHits++
 			_, _ = w.Write(append([]byte{0xff, 0xd8}, make([]byte, 11*1024)...))
@@ -238,7 +249,7 @@ func TestHeadlessFlatSmokeAndVolumeCachePrecedence(t *testing.T) {
 	defer server.Close()
 	root := t.TempDir()
 	var stdout, stderr bytes.Buffer
-	code := Main(context.Background(), []string{"dl", server.URL + "/manga/fixture/", "--ch", "1", "--no-tui", "--out", root, "--delay", "0s"}, &stdout, &stderr, Dependencies{HTTP: server.Client(), ConfigPath: filepath.Join(root, "missing-config.json"), Now: func() time.Time { return time.Unix(3, 0) }})
+	code := Main(context.Background(), []string{"dl", server.URL + "/manga/fixture/", "--ch", "1", "--no-tui", "--out", root, "--delay", "0s"}, &stdout, &stderr, Dependencies{HTTP: server.Client(), BaseURL: server.URL, ConfigPath: filepath.Join(root, "missing-config.json"), Now: func() time.Time { return time.Unix(3, 0) }})
 	if code != 0 {
 		t.Fatalf("headless code=%d stdout=%s stderr=%s", code, stdout.String(), stderr.String())
 	}
@@ -253,13 +264,13 @@ func TestHeadlessFlatSmokeAndVolumeCachePrecedence(t *testing.T) {
 	}
 
 	cachePath := filepath.Join(root, "fixture", ".volumes.json")
-	cache := komiku.VolumeCache{Source: "manual", Volumes: []komiku.Volume{{Volume: 7, Start: 1, End: 1}}}
+	cache := kiryuu.VolumeCache{Source: "manual", Volumes: []kiryuu.Volume{{Volume: 7, Start: 1, End: 1}}}
 	cacheData, _ := json.Marshal(cache)
 	if err := os.WriteFile(cachePath, cacheData, 0o644); err != nil {
 		t.Fatal(err)
 	}
 	stdout.Reset()
-	code = Main(context.Background(), []string{"dl", server.URL + "/manga/fixture/", "--vol", "7", "--no-tui", "--out", root, "--delay", "0s"}, &stdout, &stderr, Dependencies{HTTP: server.Client(), ConfigPath: filepath.Join(root, "missing-config.json"), Now: func() time.Time { return time.Unix(4, 0) }})
+	code = Main(context.Background(), []string{"dl", server.URL + "/manga/fixture/", "--vol", "7", "--no-tui", "--out", root, "--delay", "0s"}, &stdout, &stderr, Dependencies{HTTP: server.Client(), BaseURL: server.URL, ConfigPath: filepath.Join(root, "missing-config.json"), Now: func() time.Time { return time.Unix(4, 0) }})
 	if code != 0 {
 		t.Fatalf("cached volume run code=%d stderr=%s", code, stderr.String())
 	}
@@ -278,9 +289,10 @@ func TestHeadlessRawPackURLFirstSmoke(t *testing.T) {
 	server = httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch r.URL.Path {
 		case "/manga/fixture-pack/":
-			fmt.Fprint(w, `<a href="/fixture-chapter-1/"></a>`)
-		case "/fixture-chapter-1/":
-			fmt.Fprintf(w, `<img class="klazy" src="%s/one.jpeg"><img class="klazy" src="%s/two.png">`, server.URL, server.URL)
+			fmt.Fprint(w, kiryuuSeriesPage(server.URL, "fixture-pack", []kiryuuChapterFixture{{ID: "101", Number: "1"}}))
+		case "/wp-json/kiru/v1/chapter":
+			fmt.Fprint(w, kiryuuChapterObjectJSON("fixture-pack", r.URL.Query().Get("id"), "1", server.URL,
+				fmt.Sprintf(`<img src="%s/one.jpeg"><img src="%s/two.png">`, server.URL, server.URL)))
 		case "/one.jpeg":
 			_, _ = w.Write(originalJPEG)
 		case "/two.png":
@@ -296,14 +308,14 @@ func TestHeadlessRawPackURLFirstSmoke(t *testing.T) {
 	if err := os.MkdirAll(seriesDir, 0o755); err != nil {
 		t.Fatal(err)
 	}
-	cacheData, _ := json.Marshal(komiku.VolumeCache{Source: "fixture", Volumes: []komiku.Volume{{Volume: 1, Start: 1, End: 1}}})
+	cacheData, _ := json.Marshal(kiryuu.VolumeCache{Source: "fixture", Volumes: []kiryuu.Volume{{Volume: 1, Start: 1, End: 1}}})
 	if err := os.WriteFile(filepath.Join(seriesDir, ".volumes.json"), cacheData, 0o644); err != nil {
 		t.Fatal(err)
 	}
 	var stdout, stderr bytes.Buffer
 	code := Main(context.Background(), []string{
 		"dl", server.URL + "/manga/fixture-pack/", "--vol", "1", "--no-tui", "--pack", "--preset", "raw", "--out", root, "--delay", "0s",
-	}, &stdout, &stderr, Dependencies{HTTP: server.Client(), ConfigPath: filepath.Join(root, "missing-config.json")})
+	}, &stdout, &stderr, Dependencies{HTTP: server.Client(), BaseURL: server.URL, ConfigPath: filepath.Join(root, "missing-config.json")})
 	if code != 0 {
 		t.Fatalf("raw pack code=%d stdout=%s stderr=%s", code, stdout.String(), stderr.String())
 	}
@@ -348,9 +360,9 @@ func TestHeadlessPackPersistedMediumAndExplicitTinyRawOverrides(t *testing.T) {
 	server = httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch r.URL.Path {
 		case "/manga/presets/":
-			fmt.Fprint(w, `<a href="/presets-chapter-1/"></a>`)
-		case "/presets-chapter-1/":
-			fmt.Fprintf(w, `<img class="klazy" src="%s/page.jpg">`, server.URL)
+			fmt.Fprint(w, kiryuuSeriesPage(server.URL, "presets", []kiryuuChapterFixture{{ID: "101", Number: "1"}}))
+		case "/wp-json/kiru/v1/chapter":
+			fmt.Fprint(w, kiryuuChapterObjectJSON("presets", r.URL.Query().Get("id"), "1", server.URL, fmt.Sprintf(`<img src="%s/page.jpg">`, server.URL)))
 		case "/page.jpg":
 			_, _ = w.Write(original)
 		default:
@@ -381,7 +393,7 @@ func TestHeadlessPackPersistedMediumAndExplicitTinyRawOverrides(t *testing.T) {
 			if err := os.MkdirAll(seriesDir, 0o755); err != nil {
 				t.Fatal(err)
 			}
-			cacheData, _ := json.Marshal(komiku.VolumeCache{Source: "fixture", Volumes: []komiku.Volume{{Volume: 1, Start: 1, End: 1}}})
+			cacheData, _ := json.Marshal(kiryuu.VolumeCache{Source: "fixture", Volumes: []kiryuu.Volume{{Volume: 1, Start: 1, End: 1}}})
 			if err := os.WriteFile(filepath.Join(seriesDir, ".volumes.json"), cacheData, 0o644); err != nil {
 				t.Fatal(err)
 			}
@@ -390,7 +402,7 @@ func TestHeadlessPackPersistedMediumAndExplicitTinyRawOverrides(t *testing.T) {
 				args = append(args, "--preset", test.flag)
 			}
 			var stdout, stderr bytes.Buffer
-			if code := Main(context.Background(), args, &stdout, &stderr, Dependencies{HTTP: server.Client(), ConfigPath: configPath}); code != 0 {
+			if code := Main(context.Background(), args, &stdout, &stderr, Dependencies{HTTP: server.Client(), BaseURL: server.URL, ConfigPath: configPath}); code != 0 {
 				t.Fatalf("code=%d stdout=%s stderr=%s", code, stdout.String(), stderr.String())
 			}
 			if !strings.Contains(stdout.String(), "preset="+test.wantPreset) {
@@ -502,7 +514,7 @@ func TestInvalidConfigStopsBeforeNetwork(t *testing.T) {
 		calls++
 		return nil, fmt.Errorf("must not be called")
 	})}
-	code := Main(context.Background(), []string{"dl", "https://komiku.org/manga/x/", "--ch", "1", "--flat", "--no-tui"}, io.Discard, io.Discard, Dependencies{HTTP: httpClient, ConfigPath: configPath})
+	code := Main(context.Background(), []string{"dl", "https://v7.kiryuu.to/manga/x/", "--ch", "1", "--flat", "--no-tui"}, io.Discard, io.Discard, Dependencies{HTTP: httpClient, ConfigPath: configPath})
 	if code == 0 || calls != 0 {
 		t.Fatalf("invalid config code=%d network calls=%d", code, calls)
 	}

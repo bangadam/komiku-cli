@@ -94,7 +94,7 @@ export function TrendingScreen({
   return (
     <div className="flex h-full flex-col overflow-hidden">
       <DiscoveryBar icon={TrendingUp} label="Trending">
-        <BarMeta icon={Flame}>komiku.org/p/trending</BarMeta>
+        <BarMeta icon={Flame}>v7.kiryuu.to</BarMeta>
         <span className="mx-1 h-4 w-px bg-border" />
         <RefreshButton busy={trending.loading} onClick={trending.reload} />
       </DiscoveryBar>
@@ -106,7 +106,7 @@ export function TrendingScreen({
               Trending Now
             </h1>
             <p className="text-[13px] text-muted-foreground">
-              Most-read titles in the last {windowLabel[period]}
+              Recently updated titles · {windowLabel[period]}
             </p>
           </div>
           <div className="flex-1" />
@@ -327,8 +327,8 @@ export function TrendingScreen({
 
             <div className="rounded-[7px] bg-muted p-2.5">
               <p className="text-[10px] leading-relaxed text-dim">
-                Trending comes from komiku.org analytics. Open a series to
-                pick the chapters you want to download.
+                Trending lists the titles Kiryuu updated most recently. Open a
+                series to pick the chapters you want to download.
               </p>
             </div>
           </aside>

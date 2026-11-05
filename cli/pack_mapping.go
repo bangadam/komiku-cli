@@ -11,17 +11,17 @@ import (
 	"strconv"
 	"strings"
 
-	"github.com/bangadam/komiku-cli/komiku"
+	"github.com/bangadam/komiku-cli/kiryuu"
 )
 
 // ParseVolumeMap parses the compact mapping the GUI already knows
 // ("1:1-5,2:6-14,23:201-201") so a pack can run offline without a manifest.
-func ParseVolumeMap(expression string) ([]komiku.Volume, error) {
+func ParseVolumeMap(expression string) ([]kiryuu.Volume, error) {
 	trimmed := strings.TrimSpace(expression)
 	if trimmed == "" {
 		return nil, errors.New("volume map is empty")
 	}
-	mappings := make([]komiku.Volume, 0, 16)
+	mappings := make([]kiryuu.Volume, 0, 16)
 	for _, token := range strings.Split(trimmed, ",") {
 		token = strings.TrimSpace(token)
 		if token == "" {
@@ -44,7 +44,7 @@ func ParseVolumeMap(expression string) ([]komiku.Volume, error) {
 		if errStart != nil || errEnd != nil {
 			return nil, fmt.Errorf("volume map entry %q has an invalid chapter range", token)
 		}
-		mappings = append(mappings, komiku.Volume{Volume: volume, Start: start, End: end})
+		mappings = append(mappings, kiryuu.Volume{Volume: volume, Start: start, End: end})
 	}
 	if _, _, err := strictVolumeChapterIndex(mappings); err != nil {
 		return nil, err
@@ -55,7 +55,7 @@ func ParseVolumeMap(expression string) ([]komiku.Volume, error) {
 
 // localPackMapping reads a mapping already on disk so a pack with --vol never
 // has to ask a provider again.
-func localPackMapping(seriesDir string) ([]komiku.Volume, error) {
+func localPackMapping(seriesDir string) ([]kiryuu.Volume, error) {
 	root, err := canonicalSeriesRoot(seriesDir)
 	if err != nil {
 		return nil, err
@@ -136,7 +136,7 @@ func localDoneState(root string, local map[float64]legacyFlatChapter) (map[float
 	return loadLegacyDoneState(root)
 }
 
-func formatVolumeMap(mappings []komiku.Volume) string {
+func formatVolumeMap(mappings []kiryuu.Volume) string {
 	parts := make([]string, 0, len(mappings))
 	for _, mapping := range mappings {
 		parts = append(parts, fmt.Sprintf("%d:%d-%d", mapping.Volume, mapping.Start, mapping.End))

@@ -133,7 +133,7 @@ export function SeriesScreen({
   onOpenPack: () => void
   onRead: (chapter?: string) => void
 }) {
-  const seriesUrl = url ?? `https://komiku.org/manga/${slug}/`
+  const seriesUrl = url ?? `https://v7.kiryuu.to/manga/${slug}/`
 
   // Remount on URL change so selections and the lazy volume request never leak
   // from one series into another.

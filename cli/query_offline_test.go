@@ -25,7 +25,7 @@ func TestInfoOfflineReadsChaptersAndVolumesWithoutHTTP(t *testing.T) {
 
 	var stdout, stderr bytes.Buffer
 	code := Main(context.Background(), []string{
-		"info", "https://komiku.org/manga/sakamoto-days/", "--offline", "--volumes", "--out", root, "--json",
+		"info", "https://v7.kiryuu.to/manga/sakamoto-days/", "--offline", "--volumes", "--out", root, "--json",
 	}, &stdout, &stderr, Dependencies{HTTP: offlineHTTPClient(t), ConfigPath: filepath.Join(root, "missing-config.json")})
 	if code != 0 {
 		t.Fatalf("code=%d stderr=%s", code, stderr.String())
@@ -52,7 +52,7 @@ func TestInfoOfflineReportsMissingMappingWithoutFailing(t *testing.T) {
 
 	var stdout, stderr bytes.Buffer
 	code := Main(context.Background(), []string{
-		"info", "https://komiku.org/manga/flat-series/", "--offline", "--volumes", "--out", root, "--json",
+		"info", "https://v7.kiryuu.to/manga/flat-series/", "--offline", "--volumes", "--out", root, "--json",
 	}, &stdout, &stderr, Dependencies{HTTP: offlineHTTPClient(t), ConfigPath: filepath.Join(root, "missing-config.json")})
 	if code != 0 {
 		t.Fatalf("code=%d stderr=%s", code, stderr.String())
@@ -77,7 +77,7 @@ func TestInfoOfflineFallsBackToManifestMapping(t *testing.T) {
 
 	var stdout, stderr bytes.Buffer
 	code := Main(context.Background(), []string{
-		"info", "https://komiku.org/manga/mapped-series/", "--offline", "--volumes", "--out", root, "--json",
+		"info", "https://v7.kiryuu.to/manga/mapped-series/", "--offline", "--volumes", "--out", root, "--json",
 	}, &stdout, &stderr, Dependencies{HTTP: offlineHTTPClient(t), ConfigPath: filepath.Join(root, "missing-config.json")})
 	if code != 0 {
 		t.Fatalf("code=%d stderr=%s", code, stderr.String())

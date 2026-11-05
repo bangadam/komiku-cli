@@ -1,4 +1,4 @@
-# Komiku GUI
+# Kiryuu GUI
 
 Desktop client for [`komiku-cli`](../README.md), built with **Tauri 2 + React 19 + TypeScript + Tailwind v4 + shadcn/ui**.
 

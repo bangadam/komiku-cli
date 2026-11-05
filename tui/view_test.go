@@ -15,7 +15,7 @@ import (
 	"github.com/muesli/termenv"
 
 	"github.com/bangadam/komiku-cli/cli"
-	"github.com/bangadam/komiku-cli/komiku"
+	"github.com/bangadam/komiku-cli/kiryuu"
 	packer "github.com/bangadam/komiku-cli/pack"
 )
 
@@ -50,7 +50,7 @@ func TestRichFocusUsesReverseVideoWithoutFixedColors(t *testing.T) {
 	current := newModel(&fakeBackend{}, packer.Raw, false, renderer, time.Now)
 	current.width = 80
 	current.screen = chaptersScreen
-	current.chapters = []komiku.Chapter{{RawID: "1", Display: "1", Number: 1, URL: "chapter-one"}}
+	current.chapters = []kiryuu.Chapter{{RawID: "1", Display: "1", Number: 1, URL: "chapter-one"}}
 
 	focusView := current.View()
 	reverseVideo := regexp.MustCompile(`\x1b\[(?:[0-9]+;)*7(?:;[0-9]+)*m`)
@@ -62,7 +62,7 @@ func TestRichFocusUsesReverseVideoWithoutFixedColors(t *testing.T) {
 		t.Fatalf("rich focus contains a fixed foreground/background color: %q", focusView)
 	}
 	current.groupView, current.groupLoaded = true, true
-	current.groupMappings = []komiku.Volume{{Volume: 1, Start: 1, End: 1}}
+	current.groupMappings = []kiryuu.Volume{{Volume: 1, Start: 1, End: 1}}
 	current.groupFocus = groupFocus{kind: groupFocusVolume, volume: 1}
 	volumeFocusView := current.View()
 	bold := regexp.MustCompile(`\x1b\[(?:[0-9]+;)*1(?:;[0-9]+)*m`)
@@ -123,13 +123,13 @@ func TestViewBordersFitTerminalWidth(t *testing.T) {
 
 func TestViewsFitSupportedTerminalWidths(t *testing.T) {
 	renderer := lipgloss.NewRenderer(io.Discard)
-	chapter := komiku.Chapter{RawID: "271.5-extra-long-raw-identity", Display: "271.5 extra long display label", Number: 271.5, URL: "https://fixture.invalid/chapter/non-derived-identity/"}
+	chapter := kiryuu.Chapter{RawID: "271.5-extra-long-raw-identity", Display: "271.5 extra long display label", Number: 271.5, URL: "https://fixture.invalid/chapter/non-derived-identity/"}
 	for _, width := range []int{20, 40, 60, 80, 100, 120} {
 		base := newModel(&fakeBackend{}, packer.Raw, false, renderer, time.Now)
 		base.width, base.height = width, 24
 		base.input.SetValue("an intentionally long series query that remains editable")
-		base.searchResults = []komiku.Series{{Title: strings.Repeat("Long exact series title ", 6), Slug: "actual-slug", URL: "https://fixture.invalid/manga/actual/"}}
-		base.chapters = []komiku.Chapter{chapter}
+		base.searchResults = []kiryuu.Series{{Title: strings.Repeat("Long exact series title ", 6), Slug: "actual-slug", URL: "https://fixture.invalid/manga/actual/"}}
+		base.chapters = []kiryuu.Chapter{chapter}
 		base.seriesURL = "https://fixture.invalid/manga/actual-series-with-a-long-path/"
 		base.selected[chapter.URL] = true
 		base.jobs = []cli.Job{{Chapter: chapter, Flat: true}}
@@ -139,7 +139,7 @@ func TestViewsFitSupportedTerminalWidths(t *testing.T) {
 		base.packPlan = cli.PackPlan{Preset: packer.Raw, DisabledReason: "Only mapped volumes can be packed."}
 
 		base.groupView, base.groupLoaded = true, true
-		base.groupMappings = []komiku.Volume{{Volume: 28, Start: 246, End: 255}}
+		base.groupMappings = []kiryuu.Volume{{Volume: 28, Start: 246, End: 255}}
 		base.outputRoot = strings.Repeat("long-output/", 15)
 		base.packSeries = []string{strings.Repeat("long-series/", 15)}
 		base.packSeriesDir = strings.Repeat("long-series/", 15)
@@ -160,7 +160,7 @@ func TestViewsFitSupportedTerminalWidths(t *testing.T) {
 }
 
 func TestWikipediaGroupedViewShowsExactBoundariesAndPagesByChapter(t *testing.T) {
-	chapters := []komiku.Chapter{
+	chapters := []kiryuu.Chapter{
 		{RawID: "1", Display: "1", Number: 1, URL: "one"},
 		{RawID: "2", Display: "2", Number: 2, URL: "two"},
 		{RawID: "3", Display: "3", Number: 3, URL: "three"},
@@ -171,7 +171,7 @@ func TestWikipediaGroupedViewShowsExactBoundariesAndPagesByChapter(t *testing.T)
 	current.width, current.height = 80, 24
 	current.screen, current.chapters = chaptersScreen, chapters
 	current.groupView, current.groupLoaded = true, true
-	current.groupMappings = []komiku.Volume{{Volume: 1, Start: 1, End: 2}, {Volume: 2, Start: 3, End: 4}}
+	current.groupMappings = []kiryuu.Volume{{Volume: 1, Start: 1, End: 2}, {Volume: 2, Start: 3, End: 4}}
 
 	view := current.View()
 	for _, wanted := range []string{
@@ -195,7 +195,7 @@ func TestWikipediaGroupedViewShowsExactBoundariesAndPagesByChapter(t *testing.T)
 	}
 }
 func TestGroupedPagingKeepsCanonicalFocusedControlVisibleAtShortHeights(t *testing.T) {
-	chapters := []komiku.Chapter{
+	chapters := []kiryuu.Chapter{
 		{RawID: "1", Display: "1", Number: 1, URL: "one"},
 		{RawID: "2", Display: "2", Number: 2, URL: "two"},
 		{RawID: "3", Display: "3", Number: 3, URL: "three"},
@@ -206,7 +206,7 @@ func TestGroupedPagingKeepsCanonicalFocusedControlVisibleAtShortHeights(t *testi
 	current.width, current.height = 80, 10
 	current.screen, current.chapters = chaptersScreen, chapters
 	current.groupView, current.groupLoaded = true, true
-	current.groupMappings = []komiku.Volume{{Volume: 1, Start: 1, End: 2}, {Volume: 2, Start: 3, End: 4}}
+	current.groupMappings = []kiryuu.Volume{{Volume: 1, Start: 1, End: 2}, {Volume: 2, Start: 3, End: 4}}
 
 	tests := []struct {
 		focus  groupFocus
@@ -249,7 +249,7 @@ func TestMappedCoverageAndPerVolumePackOutcomesAreVisible(t *testing.T) {
 	current.width = 100
 	current.screen = chaptersScreen
 	current.flat = false
-	current.mappings = []komiku.Volume{{Volume: 1, Start: 1, End: 7}, {Volume: 2, Start: 8, End: 8}}
+	current.mappings = []kiryuu.Volume{{Volume: 1, Start: 1, End: 7}, {Volume: 2, Start: 8, End: 8}}
 	view := current.View()
 	if !strings.Contains(view, "Volume 01: ch 1-7") || !strings.Contains(view, "Volume 02: ch 8") {
 		t.Fatalf("mapped coverage missing: %q", view)

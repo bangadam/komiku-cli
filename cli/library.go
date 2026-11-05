@@ -13,7 +13,7 @@ import (
 
 	"github.com/spf13/cobra"
 
-	"github.com/bangadam/komiku-cli/komiku"
+	"github.com/bangadam/komiku-cli/kiryuu"
 	"github.com/bangadam/komiku-cli/store"
 )
 
@@ -246,10 +246,10 @@ func localSeriesURL(root, slug, baseURL string) (string, error) {
 		return manifest.SeriesURL, nil
 	}
 	if baseURL == "" {
-		baseURL = komiku.DefaultBaseURL
+		baseURL = kiryuu.DefaultBaseURL
 	}
 	seriesURL := strings.TrimSuffix(baseURL, "/") + "/manga/" + url.PathEscape(slug) + "/"
-	if _, err := komiku.ValidateSeriesURL(seriesURL); err != nil {
+	if _, err := kiryuu.ValidateSeriesURL(seriesURL); err != nil {
 		return "", err
 	}
 	return seriesURL, nil

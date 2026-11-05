@@ -18,7 +18,7 @@ import (
 	"time"
 	"unicode"
 
-	"github.com/bangadam/komiku-cli/komiku"
+	"github.com/bangadam/komiku-cli/kiryuu"
 	packer "github.com/bangadam/komiku-cli/pack"
 	"github.com/bangadam/komiku-cli/store"
 )
@@ -30,7 +30,7 @@ type wikipediaRecovery struct {
 	Series    string
 	Title     string
 	SourceURL string
-	Mappings  []komiku.Volume
+	Mappings  []kiryuu.Volume
 	Sources   []PackChapterSource
 	Ignored   []string
 }
@@ -46,12 +46,12 @@ type legacyState struct {
 }
 
 func prepareWikipediaRecovery(ctx context.Context, seriesDir, titleOverride, volumeExpression string, preset packer.Preset, httpClient *http.Client, recoverComplete bool) (wikipediaRecovery, error) {
-	return prepareVolumeRecovery(ctx, seriesDir, titleOverride, volumeExpression, preset, httpClient, recoverComplete, komiku.VolumeSourceMangaDex)
+	return prepareVolumeRecovery(ctx, seriesDir, titleOverride, volumeExpression, preset, httpClient, recoverComplete, kiryuu.VolumeSourceMangaDex)
 }
 
 // prepareVolumeRecovery rebuilds a volume mapping for a flat download from the
 // selected provider (MangaDex by default) and plans the pack.
-func prepareVolumeRecovery(ctx context.Context, seriesDir, titleOverride, volumeExpression string, preset packer.Preset, httpClient *http.Client, recoverComplete bool, source komiku.VolumeSource) (wikipediaRecovery, error) {
+func prepareVolumeRecovery(ctx context.Context, seriesDir, titleOverride, volumeExpression string, preset packer.Preset, httpClient *http.Client, recoverComplete bool, source kiryuu.VolumeSource) (wikipediaRecovery, error) {
 	root, err := canonicalSeriesRoot(seriesDir)
 	if err != nil {
 		return wikipediaRecovery{}, err
@@ -86,22 +86,22 @@ func prepareVolumeRecovery(ctx context.Context, seriesDir, titleOverride, volume
 		}
 	}
 
-	client := komiku.NewClient(redirectDisabledClient(httpClient), 0)
+	client := kiryuu.NewClient(redirectDisabledClient(httpClient), 0)
 	maxChapter := 0
 	for _, chapter := range local {
 		if whole := int(chapter.Number); whole > maxChapter {
 			maxChapter = whole
 		}
 	}
-	var cache komiku.VolumeCache
-	if source == komiku.VolumeSourceWikipedia {
+	var cache kiryuu.VolumeCache
+	if source == kiryuu.VolumeSourceWikipedia {
 		// --recover-wikipedia keeps its documented strict contract: exactly
 		// one Wikipedia page fetch, no search resolution, no fallbacks.
 		mappings, err := client.FetchWikipediaDisplayVolumesStrict(ctx, title)
 		if err != nil {
 			return wikipediaRecovery{}, err
 		}
-		cache = komiku.VolumeCache{Source: wikipediaChapterListURL(title), Volumes: mappings}
+		cache = kiryuu.VolumeCache{Source: wikipediaChapterListURL(title), Volumes: mappings}
 	} else {
 		cache, err = client.FetchVolumeMappingFrom(ctx, title, maxChapter, source)
 		if err != nil {
@@ -110,7 +110,7 @@ func prepareVolumeRecovery(ctx context.Context, seriesDir, titleOverride, volume
 	}
 	mappings := cache.Volumes
 	if len(mappings) == 0 {
-		return wikipediaRecovery{}, fmt.Errorf("%w for %q; no volume mapping is available, so the chapters cannot be grouped", komiku.ErrNoWikipediaVolumeRows, title)
+		return wikipediaRecovery{}, fmt.Errorf("%w for %q; no volume mapping is available, so the chapters cannot be grouped", kiryuu.ErrNoWikipediaVolumeRows, title)
 	}
 	sourceURL := cache.Source
 	selected, ignored, err := selectRecoveryMappings(mappings, local, done, volumeExpression, recoverComplete)
@@ -320,7 +320,7 @@ func loadLegacyDoneState(root string) (map[float64]bool, error) {
 	return done, nil
 }
 
-func selectRecoveryMappings(mappings []komiku.Volume, local map[float64]legacyFlatChapter, done map[float64]bool, expression string, recoverComplete bool) ([]komiku.Volume, []string, error) {
+func selectRecoveryMappings(mappings []kiryuu.Volume, local map[float64]legacyFlatChapter, done map[float64]bool, expression string, recoverComplete bool) ([]kiryuu.Volume, []string, error) {
 	_, volumeByChapter, err := strictVolumeChapterIndex(mappings)
 	if err != nil {
 		return nil, nil, err
@@ -390,7 +390,7 @@ func selectRecoveryMappings(mappings []komiku.Volume, local map[float64]legacyFl
 		for _, volume := range packable {
 			wanted[volume] = true
 		}
-		selected := make([]komiku.Volume, 0, len(packable))
+		selected := make([]kiryuu.Volume, 0, len(packable))
 		for _, mapping := range mappings {
 			if wanted[mapping.Volume] {
 				selected = append(selected, mapping)
@@ -415,7 +415,7 @@ func selectRecoveryMappings(mappings []komiku.Volume, local map[float64]legacyFl
 	for _, volume := range packable {
 		wanted[volume] = true
 	}
-	selected := make([]komiku.Volume, 0, len(packable))
+	selected := make([]kiryuu.Volume, 0, len(packable))
 	for _, mapping := range mappings {
 		if wanted[mapping.Volume] {
 			selected = append(selected, mapping)
@@ -425,7 +425,7 @@ func selectRecoveryMappings(mappings []komiku.Volume, local map[float64]legacyFl
 }
 
 // fractionalPartsFor returns the local chapters that represent a whole chapter
-// number. Komiku splits some chapters into fractional parts (1.1, 1.2), so a
+// number. Kiryuu splits some chapters into fractional parts (1.1, 1.2), so a
 // volume declared as 1-4 may only have 1.1/1.2 on disk instead of chapter-001.
 func fractionalPartsFor(local map[float64]legacyFlatChapter, whole int) []legacyFlatChapter {
 	parts := make([]legacyFlatChapter, 0, 2)
@@ -441,7 +441,7 @@ func fractionalPartsFor(local map[float64]legacyFlatChapter, whole int) []legacy
 // recoveredChapterIsUsed reports whether a local chapter is consumed by the
 // selected volumes. A whole chapter is used when its volume is selected. A
 // fractional part is used only when it stands in for a missing whole chapter
-// (Komiku splits chapter 1 into 1.1 and 1.2); when the whole chapter exists,
+// (Kiryuu splits chapter 1 into 1.1 and 1.2); when the whole chapter exists,
 // the fractional part is an extra and stays out of the archive.
 func recoveredChapterIsUsed(number float64, local map[float64]legacyFlatChapter, volumeByChapter map[int]int, wanted map[int]bool) bool {
 	if number <= 0 {
@@ -462,7 +462,7 @@ func recoveredChapterIsUsed(number float64, local map[float64]legacyFlatChapter,
 	return !wholeExists
 }
 
-func buildRecoverySources(root string, mappings []komiku.Volume, local map[float64]legacyFlatChapter, done map[float64]bool) ([]PackChapterSource, error) {
+func buildRecoverySources(root string, mappings []kiryuu.Volume, local map[float64]legacyFlatChapter, done map[float64]bool) ([]PackChapterSource, error) {
 	sources := make([]PackChapterSource, 0)
 	for _, mapping := range mappings {
 		for number := mapping.Start; number <= mapping.End; number++ {
@@ -476,7 +476,7 @@ func buildRecoverySources(root string, mappings []komiku.Volume, local map[float
 					return nil, fmt.Errorf("volume %02d chapter %d: %w", mapping.Volume, number, err)
 				}
 				sources = append(sources, PackChapterSource{
-					Chapter:       komiku.Chapter{Display: strconv.Itoa(number), Number: float64(number)},
+					Chapter:       kiryuu.Chapter{Display: strconv.Itoa(number), Number: float64(number)},
 					Volume:        mapping.Volume,
 					Dir:           relative,
 					ExpectedPages: pages,
@@ -500,7 +500,7 @@ func buildRecoverySources(root string, mappings []komiku.Volume, local map[float
 					return nil, fmt.Errorf("volume %02d chapter %s: %w", mapping.Volume, part.Display, err)
 				}
 				sources = append(sources, PackChapterSource{
-					Chapter:       komiku.Chapter{Display: part.Display, Number: part.Number},
+					Chapter:       kiryuu.Chapter{Display: part.Display, Number: part.Number},
 					Volume:        mapping.Volume,
 					Dir:           relative,
 					ExpectedPages: pages,

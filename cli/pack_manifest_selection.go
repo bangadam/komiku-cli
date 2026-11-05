@@ -4,26 +4,26 @@ package cli
 import (
 	"errors"
 	"fmt"
-	"github.com/bangadam/komiku-cli/komiku"
+	"github.com/bangadam/komiku-cli/kiryuu"
 	"github.com/bangadam/komiku-cli/store"
 	"math"
 	"sort"
 )
 
 type ResolvedVolumeSelection struct {
-	Mappings []komiku.Volume
+	Mappings []kiryuu.Volume
 	Jobs     []Job
 }
 
 // ResolveCompleteVolumeSelection accepts only an exact union of complete, non-overlapping
 // Wikipedia volume rows. It never assigns extras, decimal chapters, or partial rows.
-func ResolveCompleteVolumeSelection(chapters []komiku.Chapter, selected map[string]bool, mappings []komiku.Volume) (ResolvedVolumeSelection, error) {
+func ResolveCompleteVolumeSelection(chapters []kiryuu.Chapter, selected map[string]bool, mappings []kiryuu.Volume) (ResolvedVolumeSelection, error) {
 	rows, volumeByChapter, err := strictVolumeChapterIndex(mappings)
 	if err != nil {
 		return ResolvedVolumeSelection{}, err
 	}
 
-	discovered := make(map[int][]komiku.Chapter, len(chapters))
+	discovered := make(map[int][]kiryuu.Chapter, len(chapters))
 	for _, chapter := range chapters {
 		if chapter.Number <= 0 || chapter.Number != math.Trunc(chapter.Number) {
 			continue
@@ -67,7 +67,7 @@ func ResolveCompleteVolumeSelection(chapters []komiku.Chapter, selected map[stri
 		return ResolvedVolumeSelection{}, errors.New("selection contains an undiscovered or duplicate chapter identity")
 	}
 
-	selectedMappings := make([]komiku.Volume, 0, len(chosen))
+	selectedMappings := make([]kiryuu.Volume, 0, len(chosen))
 	for _, row := range rows {
 		if !chosen[row.Volume] {
 			continue
@@ -101,14 +101,14 @@ func ResolveCompleteVolumeSelection(chapters []komiku.Chapter, selected map[stri
 	return ResolvedVolumeSelection{Mappings: selectedMappings, Jobs: jobs}, nil
 }
 
-func strictVolumeChapterIndex(mappings []komiku.Volume) ([]komiku.Volume, map[int]int, error) {
+func strictVolumeChapterIndex(mappings []kiryuu.Volume) ([]kiryuu.Volume, map[int]int, error) {
 	if len(mappings) == 0 {
 		return nil, nil, errors.New("Wikipedia volume mapping is unavailable")
 	}
 	if len(mappings) > maxPackManifestMappings {
 		return nil, nil, fmt.Errorf("Wikipedia volume mapping exceeds limit %d", maxPackManifestMappings)
 	}
-	rows := append([]komiku.Volume(nil), mappings...)
+	rows := append([]kiryuu.Volume(nil), mappings...)
 	sort.Slice(rows, func(i, j int) bool {
 		if rows[i].Start == rows[j].Start {
 			return rows[i].Volume < rows[j].Volume

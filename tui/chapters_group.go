@@ -5,10 +5,10 @@ import (
 	"fmt"
 	"math"
 
-	"github.com/bangadam/komiku-cli/komiku"
+	"github.com/bangadam/komiku-cli/kiryuu"
 )
 
-func exactWikipediaVolumeForChapter(number float64, mappings []komiku.Volume) (int, bool) {
+func exactWikipediaVolumeForChapter(number float64, mappings []kiryuu.Volume) (int, bool) {
 	if number <= 0 || number != math.Trunc(number) {
 		return 0, false
 	}

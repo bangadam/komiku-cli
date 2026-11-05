@@ -26,11 +26,11 @@ func TestNewChallengeSolverRunsScriptAndCachesSession(t *testing.T) {
 	sessionPath := filepath.Join(t.TempDir(), "cf-session.json")
 	solve := NewChallengeSolver(script, sessionPath)
 
-	session, err := solve(context.Background(), "https://komiku.org/dandadan-chapter-163/")
+	session, err := solve(context.Background(), "https://v7.kiryuu.to/dandadan-chapter-163/")
 	if err != nil {
 		t.Fatalf("solve: %v", err)
 	}
-	if session.Cookie != "cf_clearance=abc" || session.UserAgent != "camoufox-ua" || session.Host != "komiku.org" {
+	if session.Cookie != "cf_clearance=abc" || session.UserAgent != "camoufox-ua" || session.Host != "v7.kiryuu.to" {
 		t.Fatalf("session = %+v", session)
 	}
 
@@ -38,7 +38,7 @@ func TestNewChallengeSolverRunsScriptAndCachesSession(t *testing.T) {
 	if err != nil {
 		t.Fatalf("LoadSession: %v", err)
 	}
-	if cached == nil || cached.Cookie != "cf_clearance=abc" || cached.Host != "komiku.org" {
+	if cached == nil || cached.Cookie != "cf_clearance=abc" || cached.Host != "v7.kiryuu.to" {
 		t.Fatalf("cached = %+v", cached)
 	}
 }
@@ -46,7 +46,7 @@ func TestNewChallengeSolverRunsScriptAndCachesSession(t *testing.T) {
 func TestNewChallengeSolverReportsScriptFailure(t *testing.T) {
 	script := writeSolverScript(t, "echo boom >&2\nexit 1")
 	solve := NewChallengeSolver(script, "")
-	_, err := solve(context.Background(), "https://komiku.org/x/")
+	_, err := solve(context.Background(), "https://v7.kiryuu.to/x/")
 	if err == nil || !strings.Contains(err.Error(), "boom") {
 		t.Fatalf("err = %v, want the script stderr", err)
 	}
@@ -55,7 +55,7 @@ func TestNewChallengeSolverReportsScriptFailure(t *testing.T) {
 func TestNewChallengeSolverRejectsEmptyCookies(t *testing.T) {
 	script := writeSolverScript(t, `printf '{"ua":"camoufox-ua","cookies":""}'`)
 	solve := NewChallengeSolver(script, "")
-	_, err := solve(context.Background(), "https://komiku.org/x/")
+	_, err := solve(context.Background(), "https://v7.kiryuu.to/x/")
 	if err == nil || !strings.Contains(err.Error(), "no cookies") {
 		t.Fatalf("err = %v, want a no-cookies error", err)
 	}

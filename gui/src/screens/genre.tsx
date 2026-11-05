@@ -348,7 +348,7 @@ export function GenreScreen({
 
             <div className="rounded-[7px] bg-muted p-2.5">
               <p className="text-[10px] leading-relaxed text-dim">
-                Combining two genres uses komiku.org's double-genre filter.
+                Combining two genres uses Kiryuu's double-genre filter.
                 Results keep the site order.
               </p>
             </div>
